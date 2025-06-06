@@ -3,18 +3,84 @@ import importlib
 import numpy as np
 import random, torch
 from functools import reduce
-from transformers import AutoTokenizer, AutoModelForCausalLM, AutoConfig
-from transformers.cache_utils import DynamicCache
-from loguru import logger
+from transformers import AutoTokenizer, AutoModelForCausalLM, AutoConfig, LlamaConfig
+from models import QuantLlamaForCausalLM
+from quantize import QuantConfig
 
-from BitMod import CompressionConfig, convert_attention_to_experimental
 
-def get_obj_from_str(string, reload=False):
-    module, cls = string.rsplit(".", 1)
-    if reload:
-        module_imp = importlib.import_module(module)
-        importlib.reload(module_imp)
-    return getattr(importlib.import_module(module, package=None), cls)
+def load_model_and_tokenizer(model_name_or_path, device_map="cuda", quant_config=None):
+    if 'llama' in model_name_or_path.lower():
+        config = LlamaConfig.from_pretrained(model_name_or_path)
+        model = QuantLlamaForCausalLM.from_pretrained(
+            model_name_or_path,
+            config=config,
+            torch_dtype=torch.float16,
+            device_map=device_map,
+            quant_config=quant_config
+        )
+    else:
+        model = AutoModelForCausalLM.from_pretrained(
+            model_name_or_path,
+            torch_dtype=torch.float16,
+            trust_remote_code=True,
+            device_map=device_map,
+        )
+    tokenizer = AutoTokenizer.from_pretrained(
+        model_name_or_path,
+        trust_remote_code=True,
+    )
+    
+    model.eval()        
+    return model, tokenizer
+
+
+def add_common_args(parser: argparse.ArgumentParser):
+    parser.add_argument('--model_name_or_path', type=str, help='model to load')
+    return parser
+
+
+def add_quant_args(parser):
+    parser.add_argument('--w_bits', type=int, default=16, help="Number of bits for weight quantization.")
+    parser.add_argument('--a_bits', type=int, default=16, help="Number of bits for activation quantization.")
+    parser.add_argument('--q_bits', type=int, default=16, help="Number of bits for query quantization.")
+    parser.add_argument('--k_bits', type=int, default=16, help="Number of bits for key quantization.")
+    parser.add_argument('--v_bits', type=int, default=16, help="Number of bits for value quantization.")
+    parser.add_argument('--p_bits', type=int, default=16, help="Number of bits for attention-score quantization.")
+    parser.add_argument('--w_group_size', type=int, default=-1, help="Group size for weight quantization.")
+    parser.add_argument('--a_group_size', type=int, default=-1, help="Group size for activation quantization.")
+    parser.add_argument('--q_group_size', type=int, default=-1, help="Group size for query quantization.")
+    parser.add_argument('--k_group_size', type=int, default=-1, help="Group size for key quantization.")
+    parser.add_argument('--v_group_size', type=int, default=-1, help="Group size for value quantization.")
+    parser.add_argument("--kv_quant_method", type=str, default="KCVT", help="KV-cache quantization method: KCVT / KTVT.")
+    parser.add_argument("--kv_residual_len", type=int, default=1, help="Residual length (number of tokens maintained in FP16) for KV-cache quantization.")
+    parser.add_argument("--kv_quant_post_attn", action="store_true", default=False, help="Whether to apply KV-cache quantization before or after self-attention.")
+    parser.add_argument("--apply_k_bias", action="store_true", default=False, help="Whether to apply per-channel key scaling for KTVT quantization")
+    parser.add_argument("--apply_k_scale", action="store_true", default=False, help="Whether to apply per-channel key bias subtraction for KTVT quantizationT")
+
+    return parser
+    
+
+def get_quant_config(args):
+    quant_config = QuantConfig(
+        w_bits=args.w_bits,
+        a_bits=args.a_bits,
+        q_bits=args.q_bits,
+        k_bits=args.k_bits,
+        v_bits=args.v_bits,
+        p_bits=args.p_bits,
+        w_group_size=args.w_group_size,
+        a_group_size=args.a_group_size,
+        q_group_size=args.q_group_size,
+        k_group_size=args.k_group_size,
+        v_group_size=args.v_group_size,
+        kv_quant_method=args.kv_quant_method,
+        kv_residual_len=args.kv_residual_len,
+        kv_quant_post_attn=args.kv_quant_post_attn,
+        apply_k_bias=args.apply_k_bias,
+        apply_k_scale=args.apply_k_scale,
+    )
+    return quant_config
+
 
 # Set seed for reproducibility
 def set_seed(seed=0):
@@ -22,12 +88,6 @@ def set_seed(seed=0):
     np.random.seed(seed)
     torch.manual_seed(seed)
 
-def get_model_numel(model):
-    param_cnt = 0
-    for name, module in model.named_modules():
-        if hasattr(module, '_nelement'):
-            param_cnt += module._nelement()
-    return param_cnt
 
 def get_model_size(model):
     param_size = 0
@@ -44,87 +104,3 @@ def get_model_size(model):
 def get_module_by_name(module, module_name):
     names = module_name.split(sep='.')
     return reduce(getattr, names, module)
-
-def get_compression_config(args):
-    config = CompressionConfig(
-        compress_method=args.compress_method,
-        rank=args.rank,
-        rankv=args.rankv,
-        prefill_rank = args.prefillrank,
-        prefill_rankv = args.prefillrankv,
-        loop=args.loop,
-        quantize_bit=args.quantize_bit,
-        group_num=args.group_num,
-        group_size = args.group_size,
-        top_k=args.top_kprun,
-        left=args.left,
-        attention_number=args.attention_number,
-        device_num=args.gpu,
-        batch_num=args.batch_size,
-        streaming=args.streaming,
-        streaming_gap=args.streaming_gap,
-        stream_grouping=args.stream_grouping,
-        use_bitmod=args.use_bitmod,
-    )
-    return config
-
-
-def load_model_and_tokenizer(model_name_or_path, use_flash_attn2=False, device_map="cuda", compression_config=None):
-    tokenizer = AutoTokenizer.from_pretrained(
-        model_name_or_path,
-        trust_remote_code=True,
-    )
-    model = AutoModelForCausalLM.from_pretrained(
-        model_name_or_path,
-        torch_dtype=torch.float16,
-        trust_remote_code=True,
-        device_map=device_map,
-        attn_implementation="flash_attention_2" if use_flash_attn2 else "sdpa",
-    )
-    
-    if compression_config is not None:
-        logger.info("Found compression configs...")
-        logger.info("Converting attention to experimental...")
-        convert_attention_to_experimental(model, compression_config)
-    model.eval()        
-    return model, tokenizer
-
-
-
-def add_common_args(parser: argparse.ArgumentParser):
-    parser.add_argument('--model_name_or_path', type=str, help='model to load')
-    return parser
-
-def add_compression_args(parser):
-    parser.add_argument("--compress_method", type=str, default=None, help="")
-    parser.add_argument("--rank", type=float, default=0.0, help="")
-    parser.add_argument("--rankv", type=float, default=0.0, help="")
-    parser.add_argument("--loop", type=int, default=0, help="")
-    parser.add_argument("--quantize_bit", type=int, default=8, help="")
-    parser.add_argument("--group_num", type=int, default=0, help="")
-    parser.add_argument("--group_size", type=int, default=0, help="")
-    parser.add_argument("--top_kprun", type=float, default=0.0, help="")
-    parser.add_argument("--left", type=float, default=0.0, help="")
-    parser.add_argument("--attention_number", type=int, default=100, help="")
-    parser.add_argument("--gpu", type=int, default=0, help="")
-    return parser
-
-
-def add_cache_args(parser):
-    parser.add_argument('--nbits', type=int, default=16, help='Number of bits for quantization. Use 16 for default DynamicCache')
-
-    # Separate quantization parameters for keys and values
-    parser.add_argument('--method_key', type=str, default='classic', help='Quantization method for keys')
-    parser.add_argument('--method_value', type=str, default='classic', help='Quantization method for values')
-    parser.add_argument('--clip_ratio_key', type=float, default=1.0, help='Clip ratio for quantization of keys')
-    parser.add_argument('--clip_ratio_value', type=float, default=1.0, help='Clip ratio for quantization of values')
-    parser.add_argument('--datatype_key', type=str, default='mixed', help='Datatype for quantization of keys')
-    parser.add_argument('--datatype_value', type=str, default='mixed', help='Datatype for quantization of values')
-
-    parser.add_argument('--sym', action='store_true', help='Use symmetric quantization')
-    # Other cache parameters
-    parser.add_argument('--axis_key', type=int, default=-1, help='Axis for key quantization')
-    parser.add_argument('--axis_value', type=int, default=-1, help='Axis for value quantization')
-    parser.add_argument('--q_group_size', type=int, default=128, help='Group size for quantization')
-    parser.add_argument('--residual_length', type=int, default=128, help='Residual length for cache')
-    parser.add_argument('--prefill_quant', action='store_true', help='Quantize during prefill phase')

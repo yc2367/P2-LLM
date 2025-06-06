@@ -1,142 +1,144 @@
 import torch
 import torch.nn as nn
+
 from datasets import load_dataset
-from tqdm import tqdm
+
 import argparse
-import os
-from utils import load_model_and_tokenizer, add_common_args, add_cache_args, build_cache
+from tqdm import tqdm
 from loguru import logger
+import os
+import json
+import random
+import warnings
+# Ignore all warnings
+warnings.filterwarnings("ignore")
 
-def get_ppl_eval_loaders(name, tokenizer, seqlen=2048):
-    if "wikitext2" in name:
-        testdata = load_dataset(
-            "wikitext",
-            "wikitext-2-raw-v1",
-            split="test",
-        )
-        testenc = tokenizer("\n\n".join(testdata["text"]), return_tensors="pt")
-        return testenc
-    elif "c4" in name:
-        # Wrapper for tokenized input IDs
-        class TokenizerWrapper:
-            def __init__(self, input_ids):
-                self.input_ids = input_ids
-                
-        valdata = load_dataset(
-            "allenai/c4",
-            data_files={"validation": "en/c4-validation.00000-of-00008.json.gz"},
-            revision="607bd4c8450a42878aa9ddc051a65a055450ef87",
-            split="validation",
-        )
-        testenc = tokenizer(' '.join(valdata[:1100]['text']), return_tensors='pt')
-        testenc = testenc.input_ids[:, :(256 * seqlen)]
-        testenc = TokenizerWrapper(testenc)
-        return testenc
-    else:
-        raise NotImplementedError
+from utils import (
+    load_model_and_tokenizer, 
+    add_common_args, 
+    add_quant_args, 
+    get_quant_config,
+    set_seed,
+)
+
     
-
-def get_ppl_eval_loaders(name, tokenizer, seqlen=2048):
-    if "wikitext2" in name:
-        testdata = load_dataset(
-            "wikitext",
-            "wikitext-2-raw-v1",
-            split="test",
-        )
-        testenc = tokenizer("\n\n".join(testdata["text"]), return_tensors="pt")
-        return testenc
-    elif "c4" in name:
-        # Wrapper for tokenized input IDs
-        class TokenizerWrapper:
-            def __init__(self, input_ids):
-                self.input_ids = input_ids
-                
-        valdata = load_dataset(
-            "allenai/c4",
-            data_files={"validation": "en/c4-validation.00000-of-00008.json.gz"},
-            revision="607bd4c8450a42878aa9ddc051a65a055450ef87",
-            split="validation",
-        )
-        #testenc = tokenizer("\n\n".join(valdata["text"]), return_tensors="pt")
-        testenc = tokenizer(' '.join(valdata[:1100]['text']), return_tensors='pt')
-        testenc = testenc.input_ids[:, :(256 * seqlen)]
-        testenc = TokenizerWrapper(testenc)
-        return testenc
-    else:
-        raise NotImplementedError
-
 @torch.no_grad()
-def eval_ppl(model, tokenizer, model_name, datasets, seqlen=2048, device="cuda"):
-    model = model.to(device)
-    if isinstance(device, str):
-        device = torch.device(device)
-
+def eval_ppl(model, tokenizer, args, device="cuda"):
     results = {}
-
-    for dataset in datasets.split(","):
-        cache_testloader = (
-            f"/tmp/{dataset}_testloader_{model_name.replace('/', '_')}_all_seqlen_{seqlen}.cache"
-        )
-        if os.path.exists(cache_testloader):
-            testloader = torch.load(cache_testloader)
-        else:
-            testloader = get_ppl_eval_loaders(dataset, tokenizer, seqlen=seqlen)
-            torch.save(testloader, cache_testloader)
-        
-        testenc = testloader.input_ids
-        nsamples = testenc.numel() // seqlen
-        use_cache = model.config.use_cache
-        
-        #NOTE(brian1009): Comment out the cache for now
-        #model.config.use_cache = False
-        model.eval()
-
-        nlls = []
-
-        for i in tqdm(range(nsamples)):
-            cache = build_cache(args, device, model.dtype, for_ppl_test=True)   
-            batch = testenc[:, (i * seqlen) : ((i + 1) * seqlen)].to(
-                    device
-                )
-            outputs = model.model(batch, past_key_values=cache)
-            hidden_states = outputs[0]
-            logits = model.lm_head(hidden_states)  # .contiguous()
-            shift_logits = logits[:, :-1, :]  # .contiguous()
-            shift_labels = testenc[:, (i * seqlen) : ((i + 1) * seqlen)][
-                :, 1:
-            ].to(device)
+    for task_eval in args.datasets:
+        if task_eval == "wikitext":
+            # https://github.com/IST-DASLab/gptq/blob/2d65066eeb06a5c9ff5184d8cebdf33662c67faf/llama.py#L206
+            testenc = load_dataset("wikitext", "wikitext-2-raw-v1", split="test")
+            testenc = tokenizer("\n\n".join(testenc["text"]), return_tensors="pt")
+            model.seq_len = args.seq_len
+            testenc = testenc.input_ids.to(model.device)
+            nsamples = testenc.numel() // model.seq_len
+            nlls = []
             loss_fct = nn.CrossEntropyLoss()
-            loss = loss_fct(shift_logits.reshape(-1, shift_logits.size(-1)), shift_labels.reshape(-1))
-            
-            neg_log_likelihood = loss.float() * seqlen
-            nlls.append(neg_log_likelihood)
-            del cache
-            
-        ppl = torch.exp(torch.stack(nlls).sum() / (len(nlls) * seqlen))
-        model.config.use_cache = use_cache
-        results.update({dataset: ppl.item()})
+            for i in tqdm(range(nsamples), desc="evaluating..."):
+                batch = testenc[:, (i * model.seq_len) : ((i + 1) * model.seq_len)].to(
+                    model.device
+                )
+                with torch.no_grad():
+                    lm_logits = model(batch).logits
+                shift_logits = lm_logits[:, :-1, :].contiguous().float()
+                shift_labels = testenc[
+                    :, (i * model.seq_len) : ((i + 1) * model.seq_len)
+                ][:, 1:]
+                loss = loss_fct(
+                    shift_logits.view(-1, shift_logits.size(-1)), shift_labels.view(-1)
+                )
+                neg_log_likelihood = loss.float() * model.seq_len
+                nlls.append(neg_log_likelihood.item())
 
+            ppl = torch.exp(torch.tensor(nlls).sum() / (nsamples * model.seq_len))
+            print(f'Wikitext-2 perplexity: {ppl.item()}')
+            print('\n')
+
+            results["wikitext"] = ppl.item()
+        elif task_eval == "c4":
+            model_net = args.model_name_or_path.split('/')[-1]
+            model_family = '_'.join(model_net.lower().split('-')[:-1])
+            model.seq_len = args.seq_len
+
+            cache_testloader = f'/home/yc2367/llm/P2-LLM/data_cache/testloader_{model_family}_c4_{args.seq_len}.cache'
+            os.makedirs(os.path.dirname(cache_testloader), exist_ok=True)
+            if os.path.exists(cache_testloader):
+                testenc = torch.load(cache_testloader)
+                print(f"load calibration from {cache_testloader}")
+            else:
+                valenc = []
+                testenc = load_dataset("allenai/c4", data_files={'validation': 'en/c4-validation.00000-of-00008.json.gz'}, split="validation")
+                for _ in range(256): # run 256 samples
+                    while True:
+                        i = random.randint(0, len(testenc) - 1)
+                        tmp = tokenizer(testenc[i]['text'], return_tensors='pt')
+                        if tmp.input_ids.shape[1] > (model.seq_len+1):
+                            break
+                    i = random.randint(0, tmp.input_ids.shape[1] - model.seq_len - 1)
+                    j = i + model.seq_len
+                    valenc.append(tmp.input_ids[:, i:j])
+                testenc = torch.hstack(valenc)
+                torch.save(testenc, cache_testloader)
+            
+            nsamples = testenc.numel() // model.seq_len
+            loss_fct = nn.CrossEntropyLoss()
+            nlls = []
+            with tqdm(range(nsamples)) as progress:
+                for i in progress:
+                    batch = testenc[:, (i * model.seq_len) : ((i + 1) * model.seq_len)].to(model.device)
+                    with torch.no_grad():
+                        lm_logits = model(batch, use_cache=False, output_hidden_states=False, output_attentions=False)[0]
+                    shift_logits = lm_logits[:, :-1, :].contiguous().float()
+                    shift_labels = testenc[:, (i * model.seq_len) : ((i + 1) * model.seq_len)][:, 1:].to(model.device)
+                    loss = loss_fct(
+                        shift_logits.view(-1, shift_logits.size(-1)), shift_labels.view(-1),
+                    )
+                    neg_log_likelihood = loss.float() * model.seq_len
+                    nlls.append(neg_log_likelihood.item())
+                    progress.set_description(f"Evaluating")
+
+            ppl = torch.exp(torch.tensor(nlls).sum() / (nsamples * model.seq_len))
+            print(f'C4 perplexity: {ppl.item()}')
+            print('\n')
+
+            results['c4'] = ppl.item()
     return results
     
+
 if __name__ == '__main__':
+    set_seed(0)
     parser = argparse.ArgumentParser()
     add_common_args(parser)
-    add_cache_args(parser)
-    parser.add_argument('--datasets', type=str, help='datasets to evaluate', default='wikitext2')
-    parser.add_argument('--seqlen', type=int, help='sequence length for ppl evaluation', default=2048)
-    parser.add_argument("--device", type=str, help="device to run the model on", default="cuda")
+    add_quant_args(parser)
+    parser.add_argument('--datasets', type=lambda s: [item for item in s.split(',')], default=['wikitext'], help="Task to be evaled")
+    parser.add_argument('--seq_len', type=int, help='sequence length for ppl evaluation', default=2048)
     parser.add_argument("--verbose", action="store_true", help="Whether to print verbose information or not.")
-    args = parser.parse_args()
-    
+    args = parser.parse_args()  
+
     logger.remove()
     logger.add(lambda msg: tqdm.write(msg, end=""), colorize=True, level="INFO" if not args.verbose else "DEBUG")
     
-    model, tokenizer = load_model_and_tokenizer(args.model_name_or_path)
-    
+    quant_config = get_quant_config(args)
     logger.info(f"Start evaluating ppl...")
     logger.info(f"*model: {args.model_name_or_path}")
     logger.info(f"*datasets: {args.datasets}")
-    logger.info(f"*sequence length {args.seqlen}")
-    results = eval_ppl(model, tokenizer, args.model_name_or_path, args.datasets, args.seqlen, args.device)
+    logger.info(f"*sequence length {args.seq_len}")
+    logger.info(f"Start evaluating with the following configurations:")
+    logger.info(f"* Bench compression!!!")
+    logger.info(f"* KV-cache quantization method: {args.kv_quant_method}")
+    logger.info(f"* Key bits: {args.k_bits}")
+    logger.info(f"* Value bits: {args.v_bits}")
+    logger.info(f"* Key group size: {args.k_group_size}")
+    logger.info(f"* Value group size: {args.v_group_size}")
+    logger.info(f"* Quantize KV post Attn?: {args.kv_quant_post_attn}")
+    logger.info(f"* KV residual length: {args.kv_residual_len}")
+    logger.info(f"* Apply key bias?: {args.apply_k_bias}")
+    logger.info(f"* Apply key scale?: {args.apply_k_scale}")
+
+    model, tokenizer = load_model_and_tokenizer(args.model_name_or_path, quant_config=quant_config)
+    model = model.eval()
+    
+    results = eval_ppl(model, tokenizer, args)
     for dataset, ppl in results.items():
         logger.info(f"PPL: {ppl}")

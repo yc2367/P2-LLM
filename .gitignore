@@ -196,6 +196,7 @@ cython_debug/
 
 # Added by Yuzong Chen (yc2367@cornell.edu)
 sbatch/
+data_cache/
 scripts/
 results*/
-*.sh
+

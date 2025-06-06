@@ -1,1 +1,1 @@
-from .qmodule_llama import QuantLlamaForCausalLM
+from .quant_config import QuantConfig
