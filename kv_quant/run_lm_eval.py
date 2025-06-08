@@ -82,6 +82,7 @@ def run_lm_eval_zero_shot(
             task_manager=task_manager,
             limit=args.limit,
             log_samples=True,
+            num_fewshot=args.num_fewshot,
             fewshot_as_multiturn=args.fewshot_as_multiturn,
             apply_chat_template=args.apply_chat_template,
         ) 
@@ -99,6 +100,7 @@ if __name__ == '__main__':
     parser.add_argument("--batch_size", type=int, default=8, help="batch size for lm_eval tasks")
     parser.add_argument("--limit", type=int, default=None, help="limit number of samples to run")
     parser.add_argument("--verbose", action="store_true", help="Whether to print verbose information or not.")
+    parser.add_argument("--num_fewshot", type=int, default=0, help="Number of shots for evaluation")
     parser.add_argument("--fewshot_as_multiturn", action="store_true", help="Whether to treat fewshot as multiturn or not.")
     parser.add_argument("--apply_chat_template", action="store_true", help="Whether to apply chat template or not.")
     parser.add_argument("--save_results", type=int, help="Whether to save the results or not.")
@@ -120,23 +122,27 @@ if __name__ == '__main__':
     logger.info(f"* KV residual length: {args.kv_residual_len}")
     logger.info(f"* Apply key bias?: {args.apply_k_bias}")
     logger.info(f"* Apply key scale?: {args.apply_k_scale}")
+
+    # Create directory if it doesn't exist
+    output_dir = args.output_dir
+    os.makedirs(output_dir, exist_ok=True)
+    output_file_name = f"{args.kv_quant_method}-kbits_{args.k_bits}-vbits_{args.v_bits}-kgs_{args.k_group_size}-vgs_{args.v_group_size}-res_{args.kv_residual_len}-bias_{args.apply_k_bias}-scale_{args.apply_k_scale}"
+    output_file_path = os.path.join(output_dir, f"{output_file_name}.json")
+    # check if file exists
+    existing_dir = f'/home/yc2367/llm/P2-LLM/kv_quant/{output_dir}'
+    existing_file_path = os.path.join(existing_dir, f"{output_file_name}.json")
+    if os.path.isfile(existing_file_path):
+        print(f'Found existing output file {output_file_name} for this experiment. Exit!')
+        exit()
     
     logger.info("Loading model and tokenizer...")
     model, tokenizer = load_model_and_tokenizer(args.model_name_or_path, quant_config=quant_config)
     logger.info("Start running lm_eval zero-shot evaluation...")
-    res = run_lm_eval_zero_shot(args, model, tokenizer, )
+    res = run_lm_eval_zero_shot(args, model, tokenizer)
     
-    # Create directory if it doesn't exist
-    output_dir = args.output_dir
-    os.makedirs(output_dir, exist_ok=True)
-
     # Save results to JSON file
-    model_name = args.model_name_or_path.split("/")[-1]
-    file_name = f"{model_name}_method-{args.kv_quant_method}_kbits-{args.k_bits}_vbits-{args.v_bits}"
-    
-    output_file = os.path.join(output_dir, f"{file_name}.json")
-    with open(output_file, "w") as f:
+    with open(output_file_path, "w") as f:
         json.dump(res, f, indent=4)
 
-    print(f"Results saved to {output_file}")
+    print(f"Results saved to {output_file_path}")
     

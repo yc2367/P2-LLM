@@ -16,136 +16,6 @@ logger = logging.getLogger(__name__)
 _CONFIG_FOR_DOC = "LlamaConfig"
 
 
-def apply_rotary_pos_emb_post_quant(q, k, cos_q, sin_q, cos_k, sin_k, position_ids=None, unsqueeze_dim=1):
-    """Applies Rotary Position Embedding to the query and key tensors.
-
-    Args:
-        q (`torch.Tensor`): The query tensor.
-        k (`torch.Tensor`): The key tensor.
-        cos (`torch.Tensor`): The cosine part of the rotary embedding.
-        sin (`torch.Tensor`): The sine part of the rotary embedding.
-        position_ids (`torch.Tensor`, *optional*):
-            Deprecated and unused.
-        unsqueeze_dim (`int`, *optional*, defaults to 1):
-            The 'unsqueeze_dim' argument specifies the dimension along which to unsqueeze cos[position_ids] and
-            sin[position_ids] so that they can be properly broadcasted to the dimensions of q and k. For example, note
-            that cos[position_ids] and sin[position_ids] have the shape [batch_size, seq_len, head_dim]. Then, if q and
-            k have the shape [batch_size, heads, seq_len, head_dim], then setting unsqueeze_dim=1 makes
-            cos[position_ids] and sin[position_ids] broadcastable to the shapes of q and k. Similarly, if q and k have
-            the shape [batch_size, seq_len, heads, head_dim], then set unsqueeze_dim=2.
-    Returns:
-        `tuple(torch.Tensor)` comprising of the query and key tensors rotated using the Rotary Position Embedding.
-    """
-    cos_q = cos_q.unsqueeze(unsqueeze_dim)
-    sin_q = sin_q.unsqueeze(unsqueeze_dim)
-    cos_k = cos_k.unsqueeze(unsqueeze_dim)
-    sin_k = sin_k.unsqueeze(unsqueeze_dim)
-    q_embed = (q * cos_q) + (rotate_half(q) * sin_q)
-    k_embed = (k * cos_k) + (rotate_half(k) * sin_k)
-    return q_embed, k_embed
-
-
-class LlamaRotaryEmbeddingPostQuant(nn.Module):
-    def __init__(
-        self,
-        dim=None,
-        max_position_embeddings=2048,
-        base=10000,
-        device=None,
-        scaling_factor=1.0,
-        rope_type="default",
-        config: Optional[LlamaConfig] = None,
-    ):
-        super().__init__()
-        # TODO (joao): remove the `if` below, only used for BC
-        self.rope_kwargs = {}
-        if config is None:
-            logger.warning_once(
-                "`LlamaRotaryEmbedding` can now be fully parameterized by passing the model config through the "
-                "`config` argument. All other arguments will be removed in v4.45"
-            )
-            self.rope_kwargs = {
-                "rope_type": rope_type,
-                "factor": scaling_factor,
-                "dim": dim,
-                "base": base,
-                "max_position_embeddings": max_position_embeddings,
-            }
-            self.rope_type = rope_type
-            self.max_seq_len_cached = max_position_embeddings
-            self.original_max_seq_len = max_position_embeddings
-        else:
-            # BC: "rope_type" was originally "type"
-            if config.rope_scaling is not None:
-                self.rope_type = config.rope_scaling.get("rope_type", config.rope_scaling.get("type"))
-            else:
-                self.rope_type = "default"
-            self.max_seq_len_cached = config.max_position_embeddings
-            self.original_max_seq_len = config.max_position_embeddings
-
-        self.config = config
-        self.rope_init_fn = ROPE_INIT_FUNCTIONS[self.rope_type]
-
-        inv_freq, self.attention_scaling = self.rope_init_fn(self.config, device, **self.rope_kwargs)
-        self.register_buffer("inv_freq", inv_freq, persistent=False)
-        self.original_inv_freq = self.inv_freq
-
-    def _dynamic_frequency_update(self, position_ids, device):
-        """
-        dynamic RoPE layers should recompute `inv_freq` in the following situations:
-        1 - growing beyond the cached sequence length (allow scaling)
-        2 - the current sequence length is in the original scale (avoid losing precision with small sequences)
-        """
-        seq_len = torch.max(position_ids) + 1
-        if seq_len > self.max_seq_len_cached:  # growth
-            inv_freq, self.attention_scaling = self.rope_init_fn(
-                self.config, device, seq_len=seq_len, **self.rope_kwargs
-            )
-            self.register_buffer("inv_freq", inv_freq, persistent=False)  # TODO joao: may break with compilation
-            self.max_seq_len_cached = seq_len
-
-        if seq_len < self.original_max_seq_len and self.max_seq_len_cached > self.original_max_seq_len:  # reset
-            self.register_buffer("inv_freq", self.original_inv_freq, persistent=False)
-            self.max_seq_len_cached = self.original_max_seq_len
-
-    @torch.no_grad()
-    def forward(self, x, position_ids, position_ids_cache):
-        if "dynamic" in self.rope_type:
-            self._dynamic_frequency_update(position_ids_cache, device=x.device)
-        
-        # Core RoPE block
-        inv_freq_expanded = self.inv_freq[None, :, None].float().expand(position_ids.shape[0], -1, 1)
-        position_ids_expanded = position_ids[:, None, :].float()
-        # Force float32 (see https://github.com/huggingface/transformers/pull/29285)
-        device_type = x.device.type
-        device_type = device_type if isinstance(device_type, str) and device_type != "mps" else "cpu"
-        with torch.autocast(device_type=device_type, enabled=False):
-            freqs = (inv_freq_expanded.float() @ position_ids_expanded.float()).transpose(1, 2)
-            emb = torch.cat((freqs, freqs), dim=-1)
-            cos_q = emb.cos()
-            sin_q = emb.sin()
-        
-        # Core RoPE block
-        inv_freq_expanded_cache = self.inv_freq[None, :, None].float().expand(position_ids_cache.shape[0], -1, 1)
-        position_ids_expanded_cache = position_ids_cache[:, None, :].float()
-        # Force float32 (see https://github.com/huggingface/transformers/pull/29285)
-        device_type = x.device.type
-        device_type = device_type if isinstance(device_type, str) and device_type != "mps" else "cpu"
-        with torch.autocast(device_type=device_type, enabled=False):
-            freqs = (inv_freq_expanded_cache.float() @ position_ids_expanded_cache.float()).transpose(1, 2)
-            emb = torch.cat((freqs, freqs), dim=-1)
-            cos_k = emb.cos()
-            sin_k = emb.sin()
-
-        # Advanced RoPE types (e.g. yarn) apply a post-processing scaling factor, equivalent to scaling attention
-        cos_q = cos_q * self.attention_scaling
-        sin_q = sin_q * self.attention_scaling
-        cos_k = cos_k * self.attention_scaling
-        sin_k = sin_k * self.attention_scaling
-
-        return cos_q.to(dtype=x.dtype), sin_q.to(dtype=x.dtype), cos_k.to(dtype=x.dtype), sin_k.to(dtype=x.dtype)
-
-
 class QuantLlamaAttention(nn.Module):
     """Multi-headed attention from 'Attention Is All You Need' paper"""
 
@@ -187,7 +57,6 @@ class QuantLlamaAttention(nn.Module):
         self.v_proj = nn.Linear(self.hidden_size, self.num_key_value_heads * self.head_dim, bias=config.attention_bias)
         self.o_proj = nn.Linear(self.num_heads * self.head_dim, self.hidden_size, bias=config.attention_bias)
         self.rotary_emb = LlamaRotaryEmbedding(config=self.config)
-        self.rotary_emb_post_quant = LlamaRotaryEmbeddingPostQuant(config=self.config)
 
     def _shape(self, tensor: torch.Tensor, seq_len: int, bsz: int):
         return tensor.view(bsz, seq_len, self.num_heads, self.head_dim).transpose(1, 2).contiguous()
@@ -240,10 +109,41 @@ class QuantLlamaAttention(nn.Module):
 
         #NOTE: Added by (Yuzong Chen)
         if not self.kv_quant_post_attn:
-            if past_key_value is None: # Prefill Stage
-                # Cache position_ids during prefill
-                position_ids_cache = position_ids
+            if past_key_value is not None: # Decoding Stage
+                key_states_quant = past_key_value[0] # quantized key
+                key_states_float = past_key_value[1] # full-precision residual key
+                value_states_quant = past_key_value[2] # quantized value
+                value_states_float = past_key_value[3] # full-precision residual value
 
+                if key_states_float is not None:
+                    key_states_float = torch.cat([key_states_float, key_states], dim=2)
+                else:
+                    key_states_float = key_states
+                if value_states_float is not None:
+                    value_states_float = torch.cat([value_states_float, value_states], dim=2)
+                else:
+                    value_states_float = value_states
+
+                if key_states_float.shape[-2] == self.kv_residual_len:
+                    key_states_quant_new, value_states_quant_new = kv_quant_function(
+                        key_states_float, value_states_float,
+                        self.quant_config, k_bias=self.k_bias, k_scale=self.k_scale
+                    )
+                    # Rotary Positional Embedding (RoPE) after quantization
+                    cos, sin = self.rotary_emb(value_states_quant_new[:, :, -1:, :], position_ids)
+                    query_states, key_states_quant_new[:, :, -1:, :] = apply_rotary_pos_emb(query_states, key_states_quant_new[:, :, -1:, :], cos, sin, position_ids)
+
+                    key_states_float = None
+                    value_states_float = None
+                    if key_states_quant is not None:
+                        key_states_quant = torch.cat([key_states_quant, key_states_quant_new], dim=2)
+                    else:
+                        key_states_quant = key_states_quant_new
+                    if value_states_quant is not None:
+                        value_states_quant = torch.cat([value_states_quant, value_states_quant_new], dim=2)
+                    else:
+                        value_states_quant = value_states_quant_new
+            else: # Prefill Stage
                 # Calculate scale and bias for key-smoothing
                 if self.apply_k_bias and (not self.apply_k_scale):
                     self.k_bias = key_states.mean(dim=2, keepdim=True)
@@ -300,39 +200,7 @@ class QuantLlamaAttention(nn.Module):
                         key_states_quant, value_states_quant,
                         self.quant_config, k_bias=self.k_bias, k_scale=self.k_scale
                     )
-            else: # Decoding Stage
-                # Update position_ids cache during decoding
-                position_ids_cache = torch.cat([past_key_value[-2], position_ids], dim=-1)
-
-                key_states_quant = past_key_value[0] # quantized key
-                key_states_float = past_key_value[1] # full-precision residual key
-                value_states_quant = past_key_value[2] # quantized value
-                value_states_float = past_key_value[3] # full-precision residual value
-
-                if key_states_float is not None:
-                    key_states_float = torch.cat([key_states_float, key_states], dim=2)
-                else:
-                    key_states_float = key_states
-                if value_states_float is not None:
-                    value_states_float = torch.cat([value_states_float, value_states], dim=2)
-                else:
-                    value_states_float = value_states
-
-                if key_states_float.shape[-2] == self.kv_residual_len:
-                    key_states_quant_new, value_states_quant_new = kv_quant_function(
-                        key_states_float, value_states_float,
-                        self.quant_config, k_bias=self.k_bias, k_scale=self.k_scale
-                    )
-                    key_states_float = None
-                    value_states_float = None
-                    if key_states_quant is not None:
-                        key_states_quant = torch.cat([key_states_quant, key_states_quant_new], dim=2)
-                    else:
-                        key_states_quant = key_states_quant_new
-                    if value_states_quant is not None:
-                        value_states_quant = torch.cat([value_states_quant, value_states_quant_new], dim=2)
-                    else:
-                        value_states_quant = value_states_quant_new
+                    # key_states_quant[pruning_mask] = 0
             
             if key_states_quant is None:
                 key_states_full = key_states_float
@@ -349,11 +217,11 @@ class QuantLlamaAttention(nn.Module):
                 value_states_full = torch.cat([value_states_quant, value_states_float], dim=2)
             
             # Rotary Positional Embedding (RoPE) after quantization
-            cos_q, sin_q, cos_k, sin_k = self.rotary_emb_post_quant(value_states_full, position_ids, position_ids_cache)
-            query_states, key_states_full = apply_rotary_pos_emb_post_quant(query_states, key_states_full, cos_q, sin_q, cos_k, sin_k)
+            cos, sin = self.rotary_emb(value_states_full, position_ids)
+            query_states, key_states_full = apply_rotary_pos_emb(query_states, key_states_full, cos, sin, position_ids)
 
             # tmp for test
-            query_states_tmp, key_states_tmp = apply_rotary_pos_emb_post_quant(query_states, key_states_tmp, cos_q, sin_q, cos_k, sin_k) 
+            query_states_tmp, key_states_tmp = apply_rotary_pos_emb(query_states, key_states_tmp, cos, sin, position_ids) 
             key_states_tmp = repeat_kv(key_states_tmp, self.num_key_value_groups)
             attn_weights_tmp = torch.matmul(query_states, key_states_tmp.transpose(2, 3)) / math.sqrt(self.head_dim)
 
@@ -402,40 +270,11 @@ class QuantLlamaAttention(nn.Module):
 
             attn_output = torch.matmul(attn_weights, value_states_full) 
         else: # Quantize KV-cache after the self-attention operation
-            if past_key_value is None: # Prefill Stage
-                # Cache position_ids during prefill
-                position_ids_cache = position_ids
-
-                # Calculate scale and bias for key-smoothing
-                if self.apply_k_bias and (not self.apply_k_scale):
-                    self.k_bias = key_states.mean(dim=2, keepdim=True)
-                elif self.apply_k_scale and (not self.apply_k_bias):
-                    self.k_scale = key_states.abs().amax(dim=2, keepdim=True)
-                elif self.apply_k_scale and self.apply_k_bias:
-                    self.k_bias = key_states.mean(dim=2, keepdim=True)
-                    self.k_scale = (key_states - self.k_bias).abs().amax(dim=2, keepdim=True).pow(0.6)
-                
-                kv_states_float_len = key_states.shape[-2] % self.kv_residual_len
-                if kv_states_float_len != 0:
-                    if key_states.shape[-2] < self.kv_residual_len:
-                        key_states_quant = None
-                        key_states_float = key_states
-                        value_states_quant = None
-                        value_states_float = value_states
-                    else:
-                        key_states_quant = key_states[:, :, :-kv_states_float_len, :].contiguous()
-                        key_states_float = key_states[:, :, -kv_states_float_len:, :].contiguous()
-                        value_states_quant = value_states[:, :, :-kv_states_float_len, :].contiguous()
-                        value_states_float = value_states[:, :, -kv_states_float_len:, :].contiguous()
-                else:
-                    key_states_quant = key_states
-                    key_states_float = None
-                    value_states_quant = value_states
-                    value_states_float = None
-            else: # Decoding Stage
-                # Update position_ids cache during decoding
-                position_ids_cache = torch.cat([past_key_value[-2], position_ids], dim=-1)
-
+            # Rotary Positional Embedding (RoPE) after quantization
+            cos, sin = self.rotary_emb(value_states, position_ids)
+            query_states, key_states = apply_rotary_pos_emb(query_states, key_states, cos, sin, position_ids)
+            print(position_ids)
+            if past_key_value is not None: # Decoding Stage
                 key_states_quant = past_key_value[0] # quantized key
                 key_states_float = past_key_value[1] # full-precision residual key
                 value_states_quant = past_key_value[2] # quantized value
@@ -449,6 +288,37 @@ class QuantLlamaAttention(nn.Module):
                     value_states_float = torch.cat([value_states_float, value_states], dim=2)
                 else:
                     value_states_float = value_states
+            else: # Prefill Stage
+                # Calculate scale and bias for key-smoothing
+                if self.apply_k_bias and (not self.apply_k_scale):
+                    self.k_bias = key_states.mean(dim=2, keepdim=True)
+                elif self.apply_k_scale and (not self.apply_k_bias):
+                    self.k_scale = key_states.abs().amax(dim=2, keepdim=True)
+                elif self.apply_k_scale and self.apply_k_bias:
+                    self.k_bias = key_states.mean(dim=2, keepdim=True)
+                    self.k_scale = (key_states - self.k_bias).abs().amax(dim=2, keepdim=True).pow(0.6)
+                
+                print(key_states.shape)
+
+                kv_states_float_len = key_states.shape[-2] % self.kv_residual_len
+                print(key_states.shape[-2], self.kv_residual_len)
+                if kv_states_float_len != 0:
+                    if key_states.shape[-2] < self.kv_residual_len:
+                        key_states_quant = None
+                        key_states_float = key_states
+                        value_states_quant = None
+                        value_states_float = value_states
+                    else:
+                        key_states_quant = key_states[:, :, :-kv_states_float_len, :].contiguous()
+                        key_states_float = key_states[:, :, -kv_states_float_len:, :].contiguous()
+                        value_states_quant = value_states[:, :, :-kv_states_float_len, :].contiguous()
+                        value_states_float = value_states[:, :, -kv_states_float_len:, :].contiguous()
+                    print('???', key_states_quant.shape, key_states_float.shape)
+                else:
+                    key_states_quant = key_states
+                    key_states_float = None
+                    value_states_quant = value_states
+                    value_states_float = None
 
             if key_states_quant is None:
                 key_states_full = key_states_float
@@ -457,6 +327,7 @@ class QuantLlamaAttention(nn.Module):
             else:
                 key_states_full = torch.cat([key_states_quant, key_states_float], dim=2)
             
+            print(key_states_full.shape)
             if value_states_quant is None:
                 value_states_full = value_states_float
             elif value_states_float is None:
@@ -464,15 +335,13 @@ class QuantLlamaAttention(nn.Module):
             else:
                 value_states_full = torch.cat([value_states_quant, value_states_float], dim=2)
 
-            # Rotary Positional Embedding (RoPE) after quantization
-            cos_q, sin_q, cos_k, sin_k = self.rotary_emb_post_quant(value_states_full, position_ids, position_ids_cache)
-            query_states, key_states_full_rope = apply_rotary_pos_emb_post_quant(query_states, key_states_full, cos_q, sin_q, cos_k, sin_k)
-
+            
+            print('rope length', key_states_full.shape)
             # For GQA, repeat k/v heads if n_kv_heads < n_heads
-            key_states_full_rope = repeat_kv(key_states_full_rope, self.num_key_value_groups)
+            key_states_full = repeat_kv(key_states_full, self.num_key_value_groups)
             value_states_full = repeat_kv(value_states_full, self.num_key_value_groups)
             
-            attn_weights = torch.matmul(query_states, key_states_full_rope.transpose(2, 3)) / math.sqrt(self.head_dim)
+            attn_weights = torch.matmul(query_states, key_states_full.transpose(2, 3)) / math.sqrt(self.head_dim)
             if attn_weights.size() != (bsz, self.num_heads, q_len, kv_seq_len):
                 raise ValueError(
                     f"Attention weights should be of size {(bsz, self.num_heads, q_len, kv_seq_len)}, but is"
@@ -494,13 +363,7 @@ class QuantLlamaAttention(nn.Module):
             attn_output = torch.matmul(attn_weights, value_states_full) 
 
             # Quantize KV-cache after Self-Attn
-            if past_key_value is None: # Prefill Stage
-                if (key_states_quant is not None) and (value_states_quant is not None):
-                    key_states_quant, value_states_quant = kv_quant_function(
-                        key_states_quant, value_states_quant,
-                        self.quant_config, k_bias=self.k_bias, k_scale=self.k_scale
-                    )    
-            else: # Decoding Stage
+            if past_key_value is not None: # Decoding Stage
                 if key_states_float.shape[-2] == self.kv_residual_len:
                     key_states_quant_new, value_states_quant_new = kv_quant_function(
                         key_states_float, value_states_float,
@@ -515,9 +378,15 @@ class QuantLlamaAttention(nn.Module):
                     if value_states_quant is not None:
                         value_states_quant = torch.cat([value_states_quant, value_states_quant_new], dim=2)
                     else:
-                        value_states_quant = value_states_quant_new    
+                        value_states_quant = value_states_quant_new                    
+            else:
+                if (key_states_quant is not None) and (value_states_quant is not None):
+                    key_states_quant, value_states_quant = kv_quant_function(
+                        key_states_quant, value_states_quant,
+                        self.quant_config, k_bias=self.k_bias, k_scale=self.k_scale
+                    )
 
-        past_key_value = (key_states_quant, key_states_float, value_states_quant, value_states_float, position_ids_cache, kv_seq_len) if use_cache else None
+        past_key_value = (key_states_quant, key_states_float, value_states_quant, value_states_float, kv_seq_len) if use_cache else None
 
         if attn_output.size() != (bsz, self.num_heads, q_len, self.head_dim):
             raise ValueError(
@@ -601,6 +470,7 @@ class LlamaDecoderLayer(nn.Module):
 
         if output_attentions:
             outputs += (self_attn_weights,)
+
         if use_cache:
             outputs += (present_key_value,)
 
@@ -687,6 +557,7 @@ class QuantLlamaModel(LlamaPreTrainedModel):
             attention_mask = _prepare_4d_causal_attention_mask(
                 attention_mask, (batch_size, seq_length), inputs_embeds, past_key_values_length
             )
+        #print(attention_mask.shape, '\n\n\n\n')
 
         # embed positions
         hidden_states = inputs_embeds

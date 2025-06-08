@@ -114,6 +114,7 @@ if __name__ == '__main__':
     parser.add_argument('--datasets', type=lambda s: [item for item in s.split(',')], default=['wikitext'], help="Task to be evaled")
     parser.add_argument('--seq_len', type=int, help='sequence length for ppl evaluation', default=2048)
     parser.add_argument("--verbose", action="store_true", help="Whether to print verbose information or not.")
+    parser.add_argument("--output_dir", type=str, default="results/lm_eval", help="output directory")
     args = parser.parse_args()  
 
     logger.remove()
@@ -136,9 +137,21 @@ if __name__ == '__main__':
     logger.info(f"* Apply key bias?: {args.apply_k_bias}")
     logger.info(f"* Apply key scale?: {args.apply_k_scale}")
 
-    model, tokenizer = load_model_and_tokenizer(args.model_name_or_path, quant_config=quant_config)
-    model = model.eval()
+    # Create directory if it doesn't exist
+    output_dir = args.output_dir
+    os.makedirs(output_dir, exist_ok=True)
+    output_file_name = f"{args.kv_quant_method}-kbits_{args.k_bits}-vbits_{args.v_bits}-kgs_{args.k_group_size}-vgs_{args.v_group_size}-res_{args.kv_residual_len}-bias_{args.apply_k_bias}-scale_{args.apply_k_scale}"
+    output_file_path = os.path.join(output_dir, f"{output_file_name}.txt")
     
-    results = eval_ppl(model, tokenizer, args)
-    for dataset, ppl in results.items():
-        logger.info(f"PPL: {ppl}")
+    logger.info("Loading model and tokenizer...")
+    model, tokenizer = load_model_and_tokenizer(args.model_name_or_path, quant_config=quant_config)
+    logger.info("Start running perplexity evaluation...")
+    res = eval_ppl(model, tokenizer, args)
+
+    # Save results to JSON file
+    with open(output_file_path, "w") as f:
+        for dataset, ppl in res.items():
+            logger.info(f"{dataset} PPL: {ppl}")
+            f.write(f"{dataset} PPL: {ppl}\n")
+    
+    print(f"Results saved to {output_file_path}")

@@ -28,7 +28,7 @@ def k_quant_per_token(
         return x_fp
 
     if apply_k_bias and (not apply_k_scale):
-        x_fp_new = x_fp.to(torch.float32) - k_bias.to(torch.float32)
+        x_fp_new = x_fp - k_bias
     elif apply_k_scale and (not apply_k_bias):
         x_fp_new = x_fp / k_scale
     elif apply_k_scale and apply_k_bias:
@@ -36,22 +36,24 @@ def k_quant_per_token(
     else:
         x_fp_new = x_fp
     
-    # print(x_fp_new.max(), x_fp_new.min())
-    # print(k_bias)
-    # print('\n')
+    #################### Print Key Statistics ####################
+    # print('Max-Min before normalization', x_fp.max(), x_fp.min())
+    # print('Max-Min after normalization', (x_fp_new.max(), x_fp_new.min()))
+    # print()
+
     #################### Draw Key Cache and observe ####################
     # X = np.arange(0, x_fp_new[0, 0].shape[1]) 
     # Y = np.arange(0, x_fp_new[0, 0].shape[0])
     # X, Y = np.meshgrid(X, Y)
 
-    # Z = x_fp[0, 0].clone().cpu().abs() 
+    # Z = x_fp[0, 0].clone().cpu()
     # fig = plt.figure()
     # ax = fig.add_subplot(projection='3d')
     # surf = ax.plot_surface(X, Y, Z, rstride=10, cstride=1, cmap='coolwarm', linewidth=0.05, antialiased=True)
     # fig.colorbar(surf)
     # fig.savefig('/home/yc2367/llm/P2-LLM/kv_quant/full.png', bbox_inches = 'tight', format='png', dpi=200, pad_inches=0.1)
 
-    # Z = x_fp_new[0, 0].clone().cpu().abs() 
+    # Z = x_fp_new[0, 0].clone().cpu()
     # fig = plt.figure()
     # ax = fig.add_subplot(projection='3d')
     # surf = ax.plot_surface(X, Y, Z, rstride=10, cstride=1, cmap='coolwarm', linewidth=0.05, antialiased=True)
@@ -82,9 +84,9 @@ def k_quant_per_token(
     if apply_k_scale:
         x_dq = x_dq * k_scale
     if apply_k_bias:
-        x_dq = x_dq.to(torch.float32) + k_bias.to(torch.float32)
+        x_dq = x_dq + k_bias
     
-    #print(f'Quant Error: {(x_dq - x_fp).pow(2).mean()}')
+    # print(f'Key Quant Error Pre-RoPE: {(x_dq - x_fp).to(torch.float32).pow(2).mean() * 1e3}')
     return x_dq.to(torch.float16)
 
 

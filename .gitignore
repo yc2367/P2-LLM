@@ -199,4 +199,4 @@ sbatch/
 data_cache/
 scripts/
 results*/
-
+*.png
