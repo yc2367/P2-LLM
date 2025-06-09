@@ -113,7 +113,40 @@ class QuantLlamaAttention(nn.Module):
 
         #NOTE: Added by (Yuzong Chen)
         if not self.kv_quant_post_attn:
-            if past_key_value is not None: # Decoding Stage
+            if past_key_value is None: # Prefill Stage
+                # Calculate scale and bias for key-smoothing
+                if self.apply_k_bias and (not self.apply_k_scale):
+                    self.k_bias = key_states.mean(dim=2, keepdim=True)
+                elif self.apply_k_scale and (not self.apply_k_bias):
+                    self.k_scale = key_states.abs().amax(dim=2, keepdim=True)
+                elif self.apply_k_scale and self.apply_k_bias:
+                    self.k_bias = key_states.mean(dim=2, keepdim=True)
+                    self.k_scale = (key_states - self.k_bias).amax(dim=2, keepdim=True).pow(0.6)
+                
+                kv_states_float_len = key_states.shape[-2] % self.kv_residual_len
+                if kv_states_float_len != 0:
+                    if key_states.shape[-2] < self.kv_residual_len:
+                        key_states_quant = None
+                        key_states_float = key_states
+                        value_states_quant = None
+                        value_states_float = value_states
+                    else:
+                        key_states_quant = key_states[:, :, :-kv_states_float_len, :].contiguous()
+                        key_states_float = key_states[:, :, -kv_states_float_len:, :].contiguous()
+                        value_states_quant = value_states[:, :, :-kv_states_float_len, :].contiguous()
+                        value_states_float = value_states[:, :, -kv_states_float_len:, :].contiguous()
+                else:
+                    key_states_quant = key_states
+                    key_states_float = None
+                    value_states_quant = value_states
+                    value_states_float = None
+                
+                if (key_states_quant is not None) and (value_states_quant is not None):
+                    key_states_quant, value_states_quant = kv_quant_function(
+                        key_states_quant, value_states_quant,
+                        self.quant_config, k_bias=self.k_bias, k_scale=self.k_scale
+                    )
+            else: # Decoding Stage
                 key_states_quant = past_key_value[0] # quantized key
                 key_states_float = past_key_value[1] # full-precision residual key
                 value_states_quant = past_key_value[2] # quantized value
@@ -143,38 +176,6 @@ class QuantLlamaAttention(nn.Module):
                         value_states_quant = torch.cat([value_states_quant, value_states_quant_new], dim=2)
                     else:
                         value_states_quant = value_states_quant_new
-            else: # Prefill Stage
-                # Calculate scale and bias for key-smoothing
-                if self.apply_k_bias and (not self.apply_k_scale):
-                    self.k_bias = key_states.mean(dim=2, keepdim=True)
-                elif self.apply_k_scale and (not self.apply_k_bias):
-                    self.k_scale = key_states.abs().amax(dim=2, keepdim=True).pow(0.6)
-                elif self.apply_k_scale and self.apply_k_bias:
-                    self.k_bias = key_states.mean(dim=2, keepdim=True)
-                    self.k_scale = (key_states - self.k_bias).amax(dim=2, keepdim=True).pow(0.6)
-                
-                kv_states_float_len = key_states.shape[-2] % self.kv_residual_len
-                if kv_states_float_len != 0:
-                    if key_states.shape[-2] < self.kv_residual_len:
-                        key_states_quant = None
-                        key_states_float = key_states
-                        value_states_quant = None
-                        value_states_float = value_states
-                    else:
-                        key_states_quant = key_states[:, :, :-kv_states_float_len, :].contiguous()
-                        key_states_float = key_states[:, :, -kv_states_float_len:, :].contiguous()
-                        value_states_quant = value_states[:, :, :-kv_states_float_len, :].contiguous()
-                        value_states_float = value_states[:, :, -kv_states_float_len:, :].contiguous()
-                else:
-                    key_states_quant = key_states
-                    key_states_float = None
-                    value_states_quant = value_states
-                    value_states_float = None
-                
-                key_states_quant, value_states_quant = kv_quant_function(
-                    key_states_quant, value_states_quant,
-                    self.quant_config, k_bias=self.k_bias, k_scale=self.k_scale
-                )
             
             if key_states_quant is None:
                 key_states_full = key_states_float
@@ -216,23 +217,15 @@ class QuantLlamaAttention(nn.Module):
             ).to(query_states.dtype)
             attn_output = torch.matmul(attn_weights, value_states_full) 
         else:
-            if past_key_value is not None: # Decoding Stage
-                key_states_quant = past_key_value[0] # quantized key
-                key_states_float = past_key_value[1] # full-precision residual key
-                value_states_quant = past_key_value[2] # quantized value
-                value_states_float = past_key_value[3] # full-precision residual value
-
-                if key_states_float is not None:
-                    key_states_float = torch.cat([key_states_float, key_states], dim=2)
-                else:
-                    key_states_float = key_states
-                if value_states_float is not None:
-                    value_states_float = torch.cat([value_states_float, value_states], dim=2)
-                else:
-                    value_states_float = value_states
-            else:
-                self.k_scale = key_states.abs().amax(dim=2, keepdim=True).pow(0.6)
-                self.k_bias = key_states.mean(dim=2, keepdim=True)
+            if past_key_value is None: # Prefill Stage
+                # Calculate scale and bias for key-smoothing
+                if self.apply_k_bias and (not self.apply_k_scale):
+                    self.k_bias = key_states.mean(dim=2, keepdim=True)
+                elif self.apply_k_scale and (not self.apply_k_bias):
+                    self.k_scale = key_states.abs().amax(dim=2, keepdim=True)
+                elif self.apply_k_scale and self.apply_k_bias:
+                    self.k_bias = key_states.mean(dim=2, keepdim=True)
+                    self.k_scale = (key_states - self.k_bias).abs().amax(dim=2, keepdim=True).pow(0.6)
 
                 kv_states_float_len = key_states.shape[-2] % self.kv_residual_len
                 if kv_states_float_len != 0:
@@ -251,7 +244,21 @@ class QuantLlamaAttention(nn.Module):
                     key_states_float = None
                     value_states_quant = value_states
                     value_states_float = None
+            else: # Decoding Stage
+                key_states_quant = past_key_value[0] # quantized key
+                key_states_float = past_key_value[1] # full-precision residual key
+                value_states_quant = past_key_value[2] # quantized value
+                value_states_float = past_key_value[3] # full-precision residual value
 
+                if key_states_float is not None:
+                    key_states_float = torch.cat([key_states_float, key_states], dim=2)
+                else:
+                    key_states_float = key_states
+                if value_states_float is not None:
+                    value_states_float = torch.cat([value_states_float, value_states], dim=2)
+                else:
+                    value_states_float = value_states
+            
             if key_states_quant is None:
                 key_states_full = key_states_float
             elif key_states_float is None:
@@ -292,7 +299,13 @@ class QuantLlamaAttention(nn.Module):
             ).to(query_states.dtype)
             attn_output = torch.matmul(attn_weights, value_states_full) 
 
-            if past_key_value is not None: # Decoding Stage
+            if past_key_value is not None: # Prefill Stage
+                if (key_states_quant is not None) and (value_states_quant is not None):
+                    key_states_quant, value_states_quant = kv_quant_function(
+                        key_states_quant, value_states_quant,
+                        self.quant_config, k_bias=self.k_bias, k_scale=self.k_scale
+                    )
+            else: # Decoding Stage
                 if key_states_float.shape[-2] == self.kv_residual_len:
                     key_states_quant_new, value_states_quant_new = kv_quant_function(
                         key_states_float, value_states_float,
@@ -308,11 +321,6 @@ class QuantLlamaAttention(nn.Module):
                         value_states_quant = torch.cat([value_states_quant, value_states_quant_new], dim=2)
                     else:
                         value_states_quant = value_states_quant_new
-            else:
-                key_states_quant, value_states_quant = kv_quant_function(
-                    key_states_quant, value_states_quant,
-                    self.quant_config, k_bias=self.k_bias, k_scale=self.k_scale
-                )
 
         past_key_value = (key_states_quant, key_states_float, value_states_quant, value_states_float, kv_seq_len) if use_cache else None
         if attn_output.size() != (bsz, self.num_heads, q_len, self.head_dim):
