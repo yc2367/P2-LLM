@@ -8,34 +8,9 @@ from models import QuantLlamaForCausalLM
 from quantize import QuantConfig
 
 
-def load_model_and_tokenizer(model_name_or_path, device_map="cuda", quant_config=None):
-    if 'llama' in model_name_or_path.lower():
-        config = LlamaConfig.from_pretrained(model_name_or_path)
-        model = QuantLlamaForCausalLM.from_pretrained(
-            model_name_or_path,
-            config=config,
-            torch_dtype=torch.float16,
-            device_map=device_map,
-            quant_config=quant_config
-        )
-    else:
-        model = AutoModelForCausalLM.from_pretrained(
-            model_name_or_path,
-            torch_dtype=torch.float16,
-            trust_remote_code=True,
-            device_map=device_map,
-        )
-    tokenizer = AutoTokenizer.from_pretrained(
-        model_name_or_path,
-        trust_remote_code=True,
-    )
-    
-    model.eval()        
-    return model, tokenizer
-
-
 def add_common_args(parser: argparse.ArgumentParser):
-    parser.add_argument('--model_name_or_path', type=str, help='model to load')
+    parser.add_argument('--model_name', type=str, help="model to load")
+    parser.add_argument('--use_fp16', action="store_true", default=False, help="Whether to use the original FP16 model.")
     return parser
 
 
@@ -45,7 +20,8 @@ def add_quant_args(parser):
     parser.add_argument('--q_bits', type=int, default=16, help="Number of bits for query quantization.")
     parser.add_argument('--k_bits', type=int, default=16, help="Number of bits for key quantization.")
     parser.add_argument('--v_bits', type=int, default=16, help="Number of bits for value quantization.")
-    parser.add_argument('--p_bits', type=int, default=16, help="Number of bits for attention-score quantization.")
+    parser.add_argument('--p_bits_pf', type=int, default=16, help="Number of bits for attention-score quantization during prefill.")
+    parser.add_argument('--p_bits_dc', type=int, default=16, help="Number of bits for attention-score quantization during decode.")
     parser.add_argument('--w_group_size', type=int, default=-1, help="Group size for weight quantization.")
     parser.add_argument('--a_group_size', type=int, default=-1, help="Group size for activation quantization.")
     parser.add_argument('--q_group_size', type=int, default=-1, help="Group size for query quantization.")
@@ -67,7 +43,8 @@ def get_quant_config(args):
         q_bits=args.q_bits,
         k_bits=args.k_bits,
         v_bits=args.v_bits,
-        p_bits=args.p_bits,
+        p_bits_pf=args.p_bits_pf,
+        p_bits_dc=args.p_bits_dc,
         w_group_size=args.w_group_size,
         a_group_size=args.a_group_size,
         q_group_size=args.q_group_size,
@@ -104,3 +81,49 @@ def get_model_size(model):
 def get_module_by_name(module, module_name):
     names = module_name.split(sep='.')
     return reduce(getattr, names, module)
+
+
+def load_model_and_tokenizer(model_name_or_path, quant_config=None, device_map="cuda", use_fp16: bool=False, use_slow_attn: bool=False):
+    """
+    Args:
+        model_name_or_path: The model to be evaluated.
+        quant_config: The quantization configuration. Will be discarded if "use_fp16=True".
+        device_map: "cpu" or "cuda".
+        use_fp16: If set to True, then evaluate the original FP16 model.
+        use_slow_attn: If set to True, then use a for loop to iterate over the number of heads during self-attention to avoid OOM for LongBench dataset.
+    Returns:
+        `tuple(torch.Tensor)` comprising of the query and key tensors rotated using the Rotary Position Embedding.
+    """
+    if 'llama' in model_name_or_path.lower():
+        config = LlamaConfig.from_pretrained(model_name_or_path)
+        if use_fp16:
+            from transformers import LlamaForCausalLM
+            model = LlamaForCausalLM.from_pretrained(
+                model_name_or_path,
+                config=config,
+                torch_dtype=torch.float16,
+                device_map=device_map
+            )
+        else:
+            config.use_slow_attn = use_slow_attn
+            model = QuantLlamaForCausalLM.from_pretrained(
+                model_name_or_path,
+                config=config,
+                torch_dtype=torch.float16,
+                device_map=device_map,
+                quant_config=quant_config
+            )
+    else:
+        model = AutoModelForCausalLM.from_pretrained(
+            model_name_or_path,
+            torch_dtype=torch.float16,
+            trust_remote_code=True,
+            device_map=device_map,
+        )
+    tokenizer = AutoTokenizer.from_pretrained(
+        model_name_or_path,
+        trust_remote_code=True,
+    )
+    
+    model.eval()        
+    return model, tokenizer

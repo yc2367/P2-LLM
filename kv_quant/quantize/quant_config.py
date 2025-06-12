@@ -7,7 +7,8 @@ class QuantConfig(dict):
         q_bits: int=16,
         k_bits: int=16,
         v_bits: int=16,
-        p_bits: int=16,
+        p_bits_pf: int=16, # attn-score precision dduring prefill 
+        p_bits_dc: int=16, # attn-score precision dduring decode 
         w_group_size: int=-1,
         a_group_size: int=-1,
         q_group_size: int=-1,
@@ -26,7 +27,7 @@ class QuantConfig(dict):
         for nbits in [a_bits, q_bits]:
             assert (nbits is None) or (nbits in [8, 16]), \
                 f'Invalid precision \"{nbits}\" provided for activation / query. Allowed precisions are {{8, 16}}'
-        for nbits in [p_bits]:
+        for nbits in [p_bits_pf, p_bits_dc]:
             assert (nbits is None) or (nbits in [8, 12, 16]), \
                 f'Invalid precision \"{nbits}\" provided for attention-score. Allowed precisions are {{8, 12, 16}}'
         
@@ -45,7 +46,8 @@ class QuantConfig(dict):
         self.q_bits = q_bits
         self.k_bits = k_bits
         self.v_bits = v_bits
-        self.p_bits = p_bits
+        self.p_bits_pf = p_bits_pf
+        self.p_bits_dc = p_bits_dc
         self.w_group_size = w_group_size
         self.a_group_size = a_group_size
         self.q_group_size = q_group_size

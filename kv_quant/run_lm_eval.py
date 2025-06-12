@@ -21,46 +21,6 @@ import warnings
 # Ignore all warnings
 warnings.filterwarnings("ignore")
 
-# class HuggingFaceCausalLM_withKV(HFLM):
-#     def __init__(self, *args, **kwargs):
-#         super().__init__(*args, **kwargs)
-#         self.kv_cache_log = []
-    
-#     def _model_generate(self, context, max_length, stop, **generation_kwargs):
-#         # temperature = 0.0 if not set
-#         # if do_sample is false and temp==0.0:
-#         # remove temperature, as do_sample=False takes care of this
-#         # and we don't want a warning from HF
-#         generation_kwargs["temperature"] = generation_kwargs.get("temperature", 0.0)
-#         do_sample = generation_kwargs.get("do_sample", None)
-
-#         # The temperature has to be a strictly positive float -- if it is 0.0, use greedy decoding strategies
-#         if generation_kwargs.get("temperature") == 0.0 and do_sample is None:
-#             generation_kwargs["do_sample"] = do_sample = False
-
-#         if do_sample is False and generation_kwargs.get("temperature") == 0.0:
-#             generation_kwargs.pop("temperature")
-#         # build stopping criteria
-#         stopping_criteria = stop_sequences_criteria(
-#             self.tokenizer, stop, context.shape[1], context.shape[0]
-#         )
-#         outputs = self.model.generate(
-#             input_ids=context,
-#             max_length=max_length,
-#             stopping_criteria=stopping_criteria,
-#             pad_token_id=self.tokenizer.pad_token_id,
-#             use_cache=True,
-#             return_dict_in_generate=True,
-#             **generation_kwargs,
-#         )
-#         past_key_values = outputs['past_key_values']
-#         self.kv_cache_log.append(past_key_values)
-#         # print(past_key_values[0][1].shape)
-#         # print(f'# of layers: {len(past_key_values)}')
-#         # print(f'Size of tuple: {len(past_key_values[0])}')
-#         # print(f'Shape of KV: {len(past_key_values[0][0].shape)}')
-#         return outputs['sequences']
-
 
 def run_lm_eval_zero_shot(
     args, model, tokenizer, max_length=4096
@@ -103,16 +63,22 @@ if __name__ == '__main__':
     parser.add_argument("--num_fewshot", type=int, default=0, help="Number of shots for evaluation")
     parser.add_argument("--fewshot_as_multiturn", action="store_true", help="Whether to treat fewshot as multiturn or not.")
     parser.add_argument("--apply_chat_template", action="store_true", help="Whether to apply chat template or not.")
-    parser.add_argument("--save_results", type=int, help="Whether to save the results or not.")
     parser.add_argument("--output_dir", type=str, default="results/lm_eval", help="output directory")
     args = parser.parse_args()  
+    quant_config = get_quant_config(args)
+    model_name = args.model_name
+
+    model2path = json.load(open("config/model2path.json", "r"))
+    model_name_or_path = model2path[model_name]
 
     logger.remove()
     logger.add(lambda msg: tqdm.write(msg, end=""), colorize=True, level="INFO" if not args.verbose else "DEBUG")
-    
-    quant_config = get_quant_config(args)
-    logger.info(f"Start evaluating with the following configurations:")
+    logger.info(f"#################### Model Info ####################")
+    logger.info(f"* Model: {model_name_or_path}")
+    logger.info(f"#################### Start evaluating LM_Eval with the following configurations: ####################")
     logger.info(f"* Bench compression!!!")
+    logger.info(f"* Attn-Score bits during Prefill: {args.p_bits_pf}")
+    logger.info(f"* Attn-Score bits during Decode: {args.p_bits_dc}")
     logger.info(f"* KV-cache quantization method: {args.kv_quant_method}")
     logger.info(f"* Key bits: {args.k_bits}")
     logger.info(f"* Value bits: {args.v_bits}")
@@ -123,21 +89,21 @@ if __name__ == '__main__':
     logger.info(f"* Apply key bias?: {args.apply_k_bias}")
     logger.info(f"* Apply key scale?: {args.apply_k_scale}")
 
-    # Create directory if it doesn't exist
-    output_dir = args.output_dir
+    logger.info("#################### Creating output directory ... ####################")
+    output_dir = os.path.join(args.output_dir, model_name)
     os.makedirs(output_dir, exist_ok=True)
-    output_file_name = f"{args.kv_quant_method}-kbits_{args.k_bits}-vbits_{args.v_bits}-kgs_{args.k_group_size}-vgs_{args.v_group_size}-res_{args.kv_residual_len}-bias_{args.apply_k_bias}-scale_{args.apply_k_scale}"
+    output_file_name = f"{args.kv_quant_method}-kbits_{args.k_bits}-vbits_{args.v_bits}-kgs_{args.k_group_size}-vgs_{args.v_group_size}-res_{args.kv_residual_len}-pbitspf_{args.p_bits_pf}-pbitsdc_{args.p_bits_dc}-bias_{args.apply_k_bias}-scale_{args.apply_k_scale}"
     output_file_path = os.path.join(output_dir, f"{output_file_name}.json")
-    # check if file exists
-    existing_dir = f'/home/yc2367/llm/P2-LLM/kv_quant/{output_dir}'
-    existing_file_path = os.path.join(existing_dir, f"{output_file_name}.json")
-    if os.path.isfile(existing_file_path):
+    # check if result file exists
+    print(output_file_path)
+    if os.path.isfile(output_file_path):
         print(f'Found existing output file {output_file_name} for this experiment. Exit!')
         exit()
     
-    logger.info("Loading model and tokenizer...")
-    model, tokenizer = load_model_and_tokenizer(args.model_name_or_path, quant_config=quant_config)
-    logger.info("Start running lm_eval zero-shot evaluation...")
+    logger.info("#################### Loading model and tokenizer ... ####################")
+    model, tokenizer = load_model_and_tokenizer(model_name_or_path, quant_config=quant_config, use_fp16=args.use_fp16)
+    
+    logger.info("#################### Start running LM_Eval zero-shot evaluation ... #################### ")
     res = run_lm_eval_zero_shot(args, model, tokenizer)
     
     # Save results to JSON file

@@ -7,7 +7,7 @@ from transformers.models.llama.modeling_llama import *
 from transformers.modeling_attn_mask_utils import _prepare_4d_causal_attention_mask
 
 from quantize.quant_config import QuantConfig
-from quantize.quantizer import kv_quant_function
+from quantize.quantizer import k_quant_function, v_quant_function, quant_matmul_pv
 
 from typing import Optional, Tuple
 import logging
@@ -34,11 +34,6 @@ class QuantLlamaAttention(nn.Module):
 
         # KV-cache quantization config
         self.quant_config = quant_config
-        self.kv_quant_method = quant_config.kv_quant_method
-        self.k_bits = quant_config.k_bits
-        self.v_bits = quant_config.v_bits
-        self.k_group_size = quant_config.k_group_size
-        self.v_group_size = quant_config.v_group_size
         self.kv_quant_post_attn = quant_config.kv_quant_post_attn
         self.kv_residual_len = quant_config.kv_residual_len
         self.apply_k_bias = quant_config.apply_k_bias
@@ -121,8 +116,9 @@ class QuantLlamaAttention(nn.Module):
                     self.k_scale = key_states.abs().amax(dim=2, keepdim=True)
                 elif self.apply_k_scale and self.apply_k_bias:
                     self.k_bias = key_states.mean(dim=2, keepdim=True)
-                    self.k_scale = (key_states - self.k_bias).amax(dim=2, keepdim=True).pow(0.6)
+                    self.k_scale = (key_states - self.k_bias).abs().amax(dim=2, keepdim=True).pow(0.6)
                 
+                ######################### Divide KV-cache into Quantized and Float parts #########################
                 kv_states_float_len = key_states.shape[-2] % self.kv_residual_len
                 if kv_states_float_len != 0:
                     if key_states.shape[-2] < self.kv_residual_len:
@@ -141,16 +137,82 @@ class QuantLlamaAttention(nn.Module):
                     value_states_quant = value_states
                     value_states_float = None
                 
+                ####################################### Quantize KV-cache ######################################
                 if (key_states_quant is not None) and (value_states_quant is not None):
-                    key_states_quant, value_states_quant = kv_quant_function(
-                        key_states_quant, value_states_quant,
-                        self.quant_config, k_bias=self.k_bias, k_scale=self.k_scale
+                    key_states_quant = k_quant_function(
+                        key_states_quant, self.quant_config, 
+                        k_bias=self.k_bias, k_scale=self.k_scale
+                    )  
+                    value_states_quant_int, value_states_quant_scale = v_quant_function(
+                        value_states_quant, self.quant_config
+                    ) 
+                else:
+                    key_states_quant = None
+                    value_states_quant_int = None
+                    value_states_quant_scale = None
+                
+                ############################################ Q x K.T ############################################
+                if key_states_quant is None:
+                    key_states = key_states_float
+                elif key_states_float is None:
+                    key_states = key_states_quant
+                else:
+                    key_states = torch.cat([key_states_quant, key_states_float], dim=2)
+
+                key_states = repeat_kv(key_states, self.num_key_value_groups)
+                attn_weights = torch.matmul(query_states, key_states.transpose(2, 3)) / math.sqrt(self.head_dim)
+                if attn_weights.size() != (bsz, self.num_heads, q_len, kv_seq_len):
+                    raise ValueError(
+                        f"Attention weights should be of size {(bsz, self.num_heads, q_len, kv_seq_len)}, but is"
+                        f" {attn_weights.size()}"
                     )
+                if attention_mask is not None:
+                    if attention_mask.size() != (bsz, 1, q_len, kv_seq_len):
+                        raise ValueError(
+                            f"Attention mask should be of size {(bsz, 1, q_len, kv_seq_len)}, but is {attention_mask.size()}"
+                        )
+                    attn_weights = attn_weights + attention_mask
+                    attn_weights = torch.max(
+                        attn_weights, torch.tensor(torch.finfo(attn_weights.dtype).min)
+                    )    
+                # upcast attention to fp32
+                attn_weights = nn.functional.softmax(
+                    attn_weights, dim=-1, dtype=torch.float32
+                ).to(query_states.dtype)
+
+                ############################################# P x V ############################################
+                if value_states_quant_int is None:
+                    value_states_full = repeat_kv(value_states_float, self.num_key_value_groups)
+                    attn_output = torch.matmul(attn_weights, value_states_full) 
+                elif value_states_float is None:
+                    value_states_full_int = repeat_kv(value_states_quant_int, self.num_key_value_groups)
+                    value_states_full_scale = repeat_kv(value_states_quant_scale, self.num_key_value_groups)
+                    attn_output = quant_matmul_pv(
+                        attn_weights, 
+                        value_states_full_int, value_states_full_scale,
+                        self.quant_config
+                    ) 
+                else:
+                    value_states_full_int = repeat_kv(value_states_quant_int, self.num_key_value_groups)
+                    value_states_full_scale = repeat_kv(value_states_quant_scale, self.num_key_value_groups)
+                    value_states_full_float = repeat_kv(value_states_float, self.num_key_value_groups)
+                    value_states_float_len = value_states_float.shape[-2]
+                    attn_weights_quant = attn_weights[..., :-value_states_float_len]
+                    attn_weights_float = attn_weights[..., -value_states_float_len:]
+                    attn_output_quant = quant_matmul_pv(
+                        attn_weights_quant, 
+                        value_states_full_int, value_states_full_scale,
+                        self.quant_config
+                    ) 
+                    attn_output_float = torch.matmul(attn_weights_float, value_states_full_float) 
+                    attn_output = attn_output_quant + attn_output_float
             else: # Decoding Stage
+                ############################## Prepare Quantized and Float KV-cache ##############################
                 key_states_quant = past_key_value[0] # quantized key
                 key_states_float = past_key_value[1] # full-precision residual key
-                value_states_quant = past_key_value[2] # quantized value
-                value_states_float = past_key_value[3] # full-precision residual value
+                value_states_quant_int = past_key_value[2] # quantized value integer
+                value_states_quant_scale = past_key_value[3] # quantized value scale
+                value_states_float = past_key_value[4] # full-precision residual value
 
                 if key_states_float is not None:
                     key_states_float = torch.cat([key_states_float, key_states], dim=2)
@@ -161,62 +223,85 @@ class QuantLlamaAttention(nn.Module):
                 else:
                     value_states_float = value_states
 
+                ####################################### Quantize KV-cache ######################################
                 if key_states_float.shape[-2] == self.kv_residual_len:
-                    key_states_quant_new, value_states_quant_new = kv_quant_function(
-                        key_states_float, value_states_float,
-                        self.quant_config, k_bias=self.k_bias, k_scale=self.k_scale
-                    )
+                    key_states_quant_new = k_quant_function(
+                        key_states_float, self.quant_config, 
+                        k_bias=self.k_bias, k_scale=self.k_scale
+                    )  
+                    value_states_quant_int_new, value_states_quant_scale_new = v_quant_function(
+                        value_states_float, self.quant_config
+                    ) 
                     key_states_float = None
                     value_states_float = None
                     if key_states_quant is not None:
                         key_states_quant = torch.cat([key_states_quant, key_states_quant_new], dim=2)
                     else:
                         key_states_quant = key_states_quant_new
-                    if value_states_quant is not None:
-                        value_states_quant = torch.cat([value_states_quant, value_states_quant_new], dim=2)
+                    if value_states_quant_int is not None:
+                        value_states_quant_int = torch.cat([value_states_quant_int, value_states_quant_int_new], dim=2)
+                        value_states_quant_scale = torch.cat([value_states_quant_scale, value_states_quant_scale_new], dim=2)
                     else:
-                        value_states_quant = value_states_quant_new
+                        value_states_quant_int = value_states_quant_int_new   
+                        value_states_quant_scale = value_states_quant_scale_new
             
-            if key_states_quant is None:
-                key_states_full = key_states_float
-            elif key_states_float is None:
-                key_states_full = key_states_quant
-            else:
-                key_states_full = torch.cat([key_states_quant, key_states_float], dim=2)
+                ######################################## Q x K.T ########################################
+                if key_states_quant is None:
+                    key_states_full = key_states_float
+                elif key_states_float is None:
+                    key_states_full = key_states_quant
+                else:
+                    key_states_full = torch.cat([key_states_quant, key_states_float], dim=2)
 
-            if value_states_quant is None:
-                value_states_full = value_states_float
-            elif value_states_float is None:
-                value_states_full = value_states_quant
-            else:
-                value_states_full = torch.cat([value_states_quant, value_states_float], dim=2)
-            
-            # For GQA, repeat k/v heads if n_kv_heads < n_heads
-            key_states_full = repeat_kv(key_states_full, self.num_key_value_groups)
-            value_states_full = repeat_kv(value_states_full, self.num_key_value_groups)
-
-            attn_weights = torch.matmul(query_states, key_states_full.transpose(2, 3)) / math.sqrt(self.head_dim)
-            if attn_weights.size() != (bsz, self.num_heads, q_len, kv_seq_len):
-                raise ValueError(
-                    f"Attention weights should be of size {(bsz, self.num_heads, q_len, kv_seq_len)}, but is"
-                    f" {attn_weights.size()}"
-                )
-            if attention_mask is not None:
-                if attention_mask.size() != (bsz, 1, q_len, kv_seq_len):
+                key_states_full = repeat_kv(key_states_full, self.num_key_value_groups)
+                attn_weights = torch.matmul(query_states, key_states_full.transpose(2, 3)) / math.sqrt(self.head_dim)
+                if attn_weights.size() != (bsz, self.num_heads, q_len, kv_seq_len):
                     raise ValueError(
-                        f"Attention mask should be of size {(bsz, 1, q_len, kv_seq_len)}, but is {attention_mask.size()}"
+                        f"Attention weights should be of size {(bsz, self.num_heads, q_len, kv_seq_len)}, but is"
+                        f" {attn_weights.size()}"
                     )
-                attn_weights = attn_weights + attention_mask
-                attn_weights = torch.max(
-                    attn_weights, torch.tensor(torch.finfo(attn_weights.dtype).min)
-                )
+                if attention_mask is not None:
+                    if attention_mask.size() != (bsz, 1, q_len, kv_seq_len):
+                        raise ValueError(
+                            f"Attention mask should be of size {(bsz, 1, q_len, kv_seq_len)}, but is {attention_mask.size()}"
+                        )
+                    attn_weights = attn_weights + attention_mask
+                    attn_weights = torch.max(
+                        attn_weights, torch.tensor(torch.finfo(attn_weights.dtype).min)
+                    )
+                # upcast attention to fp32
+                attn_weights = nn.functional.softmax(
+                    attn_weights, dim=-1, dtype=torch.float32
+                ).to(query_states.dtype)  
+                
+                ######################################## P x V #######################################
+                if value_states_quant_int is None:
+                    value_states_full = repeat_kv(value_states_float, self.num_key_value_groups)
+                    attn_output = torch.matmul(attn_weights, value_states_full) 
+                elif value_states_float is None:
+                    value_states_full_int = repeat_kv(value_states_quant_int, self.num_key_value_groups)
+                    value_states_full_scale = repeat_kv(value_states_quant_scale, self.num_key_value_groups)
+                    attn_output = quant_matmul_pv(
+                        attn_weights, 
+                        value_states_full_int, value_states_full_scale,
+                        self.quant_config
+                    ) 
+                else:
+                    value_states_full_int = repeat_kv(value_states_quant_int, self.num_key_value_groups)
+                    value_states_full_scale = repeat_kv(value_states_quant_scale, self.num_key_value_groups)
+                    value_states_full_float = repeat_kv(value_states_float, self.num_key_value_groups)
+                    value_states_float_len = value_states_float.shape[-2]
+                    attn_weights_quant = attn_weights[..., :-value_states_float_len]
+                    attn_weights_float = attn_weights[..., -value_states_float_len:]
+                    attn_output_quant = quant_matmul_pv(
+                        attn_weights_quant, 
+                        value_states_full_int, value_states_full_scale,
+                        self.quant_config
+                    ) 
+                    attn_output_float = torch.matmul(attn_weights_float, value_states_full_float) 
+                    attn_output = attn_output_quant + attn_output_float
 
-            # upcast attention to fp32
-            attn_weights = nn.functional.softmax(
-                attn_weights, dim=-1, dtype=torch.float32
-            ).to(query_states.dtype)
-            attn_output = torch.matmul(attn_weights, value_states_full) 
-        else:
+        else: # Quantize KV-cache after the self-attention operation
             if past_key_value is None: # Prefill Stage
                 # Calculate scale and bias for key-smoothing
                 if self.apply_k_bias and (not self.apply_k_scale):
@@ -227,6 +312,7 @@ class QuantLlamaAttention(nn.Module):
                     self.k_bias = key_states.mean(dim=2, keepdim=True)
                     self.k_scale = (key_states - self.k_bias).abs().amax(dim=2, keepdim=True).pow(0.6)
 
+                ######################### Divide KV-cache into Quantized and Float parts #########################
                 kv_states_float_len = key_states.shape[-2] % self.kv_residual_len
                 if kv_states_float_len != 0:
                     if key_states.shape[-2] < self.kv_residual_len:
@@ -244,11 +330,53 @@ class QuantLlamaAttention(nn.Module):
                     key_states_float = None
                     value_states_quant = value_states
                     value_states_float = None
+                
+                ############################################ Q x K.T ############################################
+                key_states = repeat_kv(key_states, self.num_key_value_groups)
+                attn_weights = torch.matmul(query_states, key_states.transpose(2, 3)) / math.sqrt(self.head_dim)
+                if attn_weights.size() != (bsz, self.num_heads, q_len, kv_seq_len):
+                    raise ValueError(
+                        f"Attention weights should be of size {(bsz, self.num_heads, q_len, kv_seq_len)}, but is"
+                        f" {attn_weights.size()}"
+                    )
+                if attention_mask is not None:
+                    if attention_mask.size() != (bsz, 1, q_len, kv_seq_len):
+                        raise ValueError(
+                            f"Attention mask should be of size {(bsz, 1, q_len, kv_seq_len)}, but is {attention_mask.size()}"
+                        )
+                    attn_weights = attn_weights + attention_mask
+                    attn_weights = torch.max(
+                        attn_weights, torch.tensor(torch.finfo(attn_weights.dtype).min)
+                    )    
+                # upcast attention to fp32
+                attn_weights = nn.functional.softmax(
+                    attn_weights, dim=-1, dtype=torch.float32
+                ).to(query_states.dtype)
+
+                ############################################# P x V ############################################
+                value_states = repeat_kv(value_states, self.num_key_value_groups)
+                attn_output = torch.matmul(attn_weights, value_states) 
+
+                ####################################### Quantize KV-cache ######################################
+                if (key_states_quant is not None) and (value_states_quant is not None):
+                    key_states_quant = k_quant_function(
+                        key_states_quant, self.quant_config, 
+                        k_bias=self.k_bias, k_scale=self.k_scale
+                    )  
+                    value_states_quant_int, value_states_quant_scale = v_quant_function(
+                        value_states_quant, self.quant_config, 
+                    ) 
+                else:
+                    key_states_quant = None
+                    value_states_quant_int = None
+                    value_states_quant_scale = None
             else: # Decoding Stage
+                ############################## Prepare Quantized and Float KV-cache ##############################
                 key_states_quant = past_key_value[0] # quantized key
                 key_states_float = past_key_value[1] # full-precision residual key
-                value_states_quant = past_key_value[2] # quantized value
-                value_states_float = past_key_value[3] # full-precision residual value
+                value_states_quant_int = past_key_value[2] # quantized value integer
+                value_states_quant_scale = past_key_value[3] # quantized value scale
+                value_states_float = past_key_value[4] # full-precision residual value
 
                 if key_states_float is not None:
                     key_states_float = torch.cat([key_states_float, key_states], dim=2)
@@ -258,77 +386,84 @@ class QuantLlamaAttention(nn.Module):
                     value_states_float = torch.cat([value_states_float, value_states], dim=2)
                 else:
                     value_states_float = value_states
-            
-            if key_states_quant is None:
-                key_states_full = key_states_float
-            elif key_states_float is None:
-                key_states_full = key_states_quant
-            else:
-                key_states_full = torch.cat([key_states_quant, key_states_float], dim=2)
+                
+                ######################################## Q x K.T ########################################
+                if key_states_quant is None:
+                    key_states_full = key_states_float
+                elif key_states_float is None:
+                    key_states_full = key_states_quant
+                else:
+                    key_states_full = torch.cat([key_states_quant, key_states_float], dim=2)
 
-            if value_states_quant is None:
-                value_states_full = value_states_float
-            elif value_states_float is None:
-                value_states_full = value_states_quant
-            else:
-                value_states_full = torch.cat([value_states_quant, value_states_float], dim=2)
-
-            # For GQA, repeat k/v heads if n_kv_heads < n_heads
-            key_states_full = repeat_kv(key_states_full, self.num_key_value_groups)
-            value_states_full = repeat_kv(value_states_full, self.num_key_value_groups)
-            
-            attn_weights = torch.matmul(query_states, key_states_full.transpose(2, 3)) / math.sqrt(self.head_dim)
-            if attn_weights.size() != (bsz, self.num_heads, q_len, kv_seq_len):
-                raise ValueError(
-                    f"Attention weights should be of size {(bsz, self.num_heads, q_len, kv_seq_len)}, but is"
-                    f" {attn_weights.size()}"
-                )
-            if attention_mask is not None:
-                if attention_mask.size() != (bsz, 1, q_len, kv_seq_len):
+                key_states_full = repeat_kv(key_states_full, self.num_key_value_groups)
+                attn_weights = torch.matmul(query_states, key_states_full.transpose(2, 3)) / math.sqrt(self.head_dim)
+                if attn_weights.size() != (bsz, self.num_heads, q_len, kv_seq_len):
                     raise ValueError(
-                        f"Attention mask should be of size {(bsz, 1, q_len, kv_seq_len)}, but is {attention_mask.size()}"
+                        f"Attention weights should be of size {(bsz, self.num_heads, q_len, kv_seq_len)}, but is"
+                        f" {attn_weights.size()}"
                     )
-                attn_weights = attn_weights + attention_mask
-                attn_weights = torch.max(
-                    attn_weights, torch.tensor(torch.finfo(attn_weights.dtype).min)
-                )
-            
-            # upcast attention to fp32
-            attn_weights = nn.functional.softmax(
-                attn_weights, dim=-1, dtype=torch.float32
-            ).to(query_states.dtype)
-            attn_output = torch.matmul(attn_weights, value_states_full) 
+                if attention_mask is not None:
+                    if attention_mask.size() != (bsz, 1, q_len, kv_seq_len):
+                        raise ValueError(
+                            f"Attention mask should be of size {(bsz, 1, q_len, kv_seq_len)}, but is {attention_mask.size()}"
+                        )
+                    attn_weights = attn_weights + attention_mask
+                    attn_weights = torch.max(
+                        attn_weights, torch.tensor(torch.finfo(attn_weights.dtype).min)
+                    )
+                # upcast attention to fp32
+                attn_weights = nn.functional.softmax(
+                    attn_weights, dim=-1, dtype=torch.float32
+                ).to(query_states.dtype)
+                
+                ######################################## P x V #######################################
+                if value_states_quant_int is None:
+                    value_states_full = repeat_kv(value_states_float, self.num_key_value_groups)
+                    attn_output = torch.matmul(attn_weights, value_states_full) 
+                else: # value_states_float will never be None in this case
+                    value_states_float_len = value_states_float.shape[-2]
+                    value_states_full_int = repeat_kv(value_states_quant_int, self.num_key_value_groups)
+                    value_states_full_scale = repeat_kv(value_states_quant_scale, self.num_key_value_groups)
+                    value_states_full_float = repeat_kv(value_states_float, self.num_key_value_groups)
+                    attn_weights_quant = attn_weights[..., :-value_states_float_len]
+                    attn_weights_float = attn_weights[..., -value_states_float_len:]
+                    attn_output_quant = quant_matmul_pv(
+                        attn_weights_quant, 
+                        value_states_full_int, value_states_full_scale,
+                        self.quant_config
+                    ) 
+                    attn_output_float = torch.matmul(attn_weights_float, value_states_full_float) 
+                    attn_output = attn_output_quant + attn_output_float
 
-            if past_key_value is not None: # Prefill Stage
-                if (key_states_quant is not None) and (value_states_quant is not None):
-                    key_states_quant, value_states_quant = kv_quant_function(
-                        key_states_quant, value_states_quant,
-                        self.quant_config, k_bias=self.k_bias, k_scale=self.k_scale
-                    )
-            else: # Decoding Stage
+                ####################################### Quantize KV-cache ######################################
                 if key_states_float.shape[-2] == self.kv_residual_len:
-                    key_states_quant_new, value_states_quant_new = kv_quant_function(
-                        key_states_float, value_states_float,
-                        self.quant_config, k_bias=self.k_bias, k_scale=self.k_scale
-                    )
+                    key_states_quant_new = k_quant_function(
+                        key_states_float, self.quant_config, 
+                        k_bias=self.k_bias, k_scale=self.k_scale
+                    )  
+                    value_states_quant_int_new, value_states_quant_scale_new = v_quant_function(
+                        value_states_float, self.quant_config
+                    ) 
                     key_states_float = None
                     value_states_float = None
                     if key_states_quant is not None:
                         key_states_quant = torch.cat([key_states_quant, key_states_quant_new], dim=2)
                     else:
                         key_states_quant = key_states_quant_new
-                    if value_states_quant is not None:
-                        value_states_quant = torch.cat([value_states_quant, value_states_quant_new], dim=2)
+                    if value_states_quant_int is not None:
+                        value_states_quant_int = torch.cat([value_states_quant_int, value_states_quant_int_new], dim=2)
+                        value_states_quant_scale = torch.cat([value_states_quant_scale, value_states_quant_scale_new], dim=2)
                     else:
-                        value_states_quant = value_states_quant_new
+                        value_states_quant_int = value_states_quant_int_new   
+                        value_states_quant_scale = value_states_quant_scale_new
 
-        past_key_value = (key_states_quant, key_states_float, value_states_quant, value_states_float, kv_seq_len) if use_cache else None
+        past_key_value = (key_states_quant, key_states_float, value_states_quant_int, value_states_quant_scale, value_states_float, position_ids_cache, kv_seq_len) if use_cache else None
+
         if attn_output.size() != (bsz, self.num_heads, q_len, self.head_dim):
             raise ValueError(
                 f"`attn_output` should be of size {(bsz, self.num_heads, q_len, self.head_dim)}, but is"
                 f" {attn_output.size()}"
             )
-
         attn_output = attn_output.transpose(1, 2).contiguous()
         attn_output = attn_output.reshape(bsz, q_len, self.hidden_size)
 

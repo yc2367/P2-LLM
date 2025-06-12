@@ -7,7 +7,7 @@ from transformers.models.llama.modeling_llama import *
 from transformers.modeling_attn_mask_utils import _prepare_4d_causal_attention_mask
 
 from quantize.quant_config import QuantConfig
-from quantize.quantizer import kv_quant_function
+from quantize.quantizer import k_quant_function, v_quant_function, quant_matmul_pv
 
 from typing import Optional, Tuple
 import logging
@@ -164,11 +164,6 @@ class QuantLlamaAttention(nn.Module):
 
         # KV-cache quantization config
         self.quant_config = quant_config
-        self.kv_quant_method = quant_config.kv_quant_method
-        self.k_bits = quant_config.k_bits
-        self.v_bits = quant_config.v_bits
-        self.k_group_size = quant_config.k_group_size
-        self.v_group_size = quant_config.v_group_size
         self.kv_quant_post_attn = quant_config.kv_quant_post_attn
         self.kv_residual_len = quant_config.kv_residual_len
         self.apply_k_bias = quant_config.apply_k_bias
@@ -252,28 +247,8 @@ class QuantLlamaAttention(nn.Module):
                 elif self.apply_k_scale and self.apply_k_bias:
                     self.k_bias = key_states.mean(dim=2, keepdim=True)
                     self.k_scale = (key_states - self.k_bias).abs().amax(dim=2, keepdim=True).pow(0.6)
-
-                    ########## Min-Max Normalization ##########
-                    # k_max = key_states.amax(dim=2, keepdim=True)
-                    # k_min = key_states.amin(dim=2, keepdim=True)
-                    # self.k_bias = k_min
-                    # self.k_scale = (k_max - k_min)
-
-                    ########## Mean Normalization ##########
-                    # k_max = key_states.amax(dim=2, keepdim=True)
-                    # k_min = key_states.amin(dim=2, keepdim=True)
-                    # self.k_bias = key_states.mean(dim=2, keepdim=True)
-                    # self.k_scale = (k_max - k_min)
-
-                    ########## Online Outlier-channel Outlier Pruning ##########
-                    # k_mean  = key_states.mean(dim=2, keepdim=True)
-                    # k_std   = key_states.std(dim=2, keepdim=True)
-                    # k_mean_smooth = key_states - k_mean
-                    # pruning_mask = torch.logical_or(k_mean_smooth.lt(-10*k_std), k_mean_smooth.gt(10*k_std))
-                    # k_mean_smooth[pruning_mask] = 0.
-                    # self.k_bias = k_mean
-                    # self.k_scale = k_mean_smooth.abs().amax(dim=2, keepdim=True)
                 
+                ######################### Divide KV-cache into Quantized and Float parts #########################
                 kv_states_float_len = key_states.shape[-2] % self.kv_residual_len
                 if kv_states_float_len != 0:
                     if key_states.shape[-2] < self.kv_residual_len:
@@ -291,23 +266,89 @@ class QuantLlamaAttention(nn.Module):
                     key_states_float = None
                     value_states_quant = value_states
                     value_states_float = None
-                
-                # tmp for test
-                key_states_tmp = key_states_quant.clone() 
 
+                ####################################### Quantize KV-cache ######################################
                 if (key_states_quant is not None) and (value_states_quant is not None):
-                    key_states_quant, value_states_quant = kv_quant_function(
-                        key_states_quant, value_states_quant,
-                        self.quant_config, k_bias=self.k_bias, k_scale=self.k_scale
+                    key_states_quant = k_quant_function(
+                        key_states_quant, self.quant_config, 
+                        k_bias=self.k_bias, k_scale=self.k_scale
+                    )  
+                    value_states_quant_int, value_states_quant_scale = v_quant_function(
+                        value_states_quant, self.quant_config
+                    ) 
+                else:
+                    key_states_quant = None
+                    value_states_quant_int = None
+                    value_states_quant_scale = None
+
+                ############################################ Q x K.T ############################################
+                if key_states_quant is None:
+                    key_states = key_states_float
+                elif key_states_float is None:
+                    key_states = key_states_quant
+                else:
+                    key_states = torch.cat([key_states_quant, key_states_float], dim=2)
+
+                cos_q, sin_q, cos_k, sin_k = self.rotary_emb_post_quant(key_states, position_ids, position_ids_cache)
+                query_states, key_states = apply_rotary_pos_emb_post_quant(query_states, key_states, cos_q, sin_q, cos_k, sin_k)
+
+                key_states = repeat_kv(key_states, self.num_key_value_groups)
+                attn_weights = torch.matmul(query_states, key_states.transpose(2, 3)) / math.sqrt(self.head_dim)
+                if attn_weights.size() != (bsz, self.num_heads, q_len, kv_seq_len):
+                    raise ValueError(
+                        f"Attention weights should be of size {(bsz, self.num_heads, q_len, kv_seq_len)}, but is"
+                        f" {attn_weights.size()}"
                     )
+                if attention_mask is not None:
+                    if attention_mask.size() != (bsz, 1, q_len, kv_seq_len):
+                        raise ValueError(
+                            f"Attention mask should be of size {(bsz, 1, q_len, kv_seq_len)}, but is {attention_mask.size()}"
+                        )
+                    attn_weights = attn_weights + attention_mask
+                    attn_weights = torch.max(
+                        attn_weights, torch.tensor(torch.finfo(attn_weights.dtype).min)
+                    )    
+                # upcast attention to fp32
+                attn_weights = nn.functional.softmax(
+                    attn_weights, dim=-1, dtype=torch.float32
+                ).to(query_states.dtype)
+
+                ############################################# P x V ############################################
+                if value_states_quant_int is None:
+                    value_states_full = repeat_kv(value_states_float, self.num_key_value_groups)
+                    attn_output = torch.matmul(attn_weights, value_states_full) 
+                elif value_states_float is None:
+                    value_states_full_int = repeat_kv(value_states_quant_int, self.num_key_value_groups)
+                    value_states_full_scale = repeat_kv(value_states_quant_scale, self.num_key_value_groups)
+                    attn_output = quant_matmul_pv(
+                        attn_weights, 
+                        value_states_full_int, value_states_full_scale,
+                        self.quant_config, is_prefill=True
+                    ) 
+                else:
+                    value_states_full_int = repeat_kv(value_states_quant_int, self.num_key_value_groups)
+                    value_states_full_scale = repeat_kv(value_states_quant_scale, self.num_key_value_groups)
+                    value_states_full_float = repeat_kv(value_states_float, self.num_key_value_groups)
+                    value_states_float_len = value_states_float.shape[-2]
+                    attn_weights_quant = attn_weights[..., :-value_states_float_len]
+                    attn_weights_float = attn_weights[..., -value_states_float_len:]
+                    attn_output_quant = quant_matmul_pv(
+                        attn_weights_quant, 
+                        value_states_full_int, value_states_full_scale,
+                        self.quant_config, is_prefill=True
+                    ) 
+                    attn_output_float = torch.matmul(attn_weights_float, value_states_full_float) 
+                    attn_output = attn_output_quant + attn_output_float
             else: # Decoding Stage
                 # Update position_ids cache during decoding
                 position_ids_cache = torch.cat([past_key_value[-2], position_ids], dim=-1)
 
+                ############################## Prepare Quantized and Float KV-cache ##############################
                 key_states_quant = past_key_value[0] # quantized key
                 key_states_float = past_key_value[1] # full-precision residual key
-                value_states_quant = past_key_value[2] # quantized value
-                value_states_float = past_key_value[3] # full-precision residual value
+                value_states_quant_int = past_key_value[2] # quantized value integer
+                value_states_quant_scale = past_key_value[3] # quantized value scale
+                value_states_float = past_key_value[4] # full-precision residual value
 
                 if key_states_float is not None:
                     key_states_float = torch.cat([key_states_float, key_states], dim=2)
@@ -317,90 +358,88 @@ class QuantLlamaAttention(nn.Module):
                     value_states_float = torch.cat([value_states_float, value_states], dim=2)
                 else:
                     value_states_float = value_states
-
+                
+                ####################################### Quantize KV-cache ######################################
                 if key_states_float.shape[-2] == self.kv_residual_len:
-                    key_states_quant_new, value_states_quant_new = kv_quant_function(
-                        key_states_float, value_states_float,
-                        self.quant_config, k_bias=self.k_bias, k_scale=self.k_scale
-                    )
+                    key_states_quant_new = k_quant_function(
+                        key_states_float, self.quant_config, 
+                        k_bias=self.k_bias, k_scale=self.k_scale
+                    )  
+                    value_states_quant_int_new, value_states_quant_scale_new = v_quant_function(
+                        value_states_float, self.quant_config
+                    ) 
                     key_states_float = None
                     value_states_float = None
                     if key_states_quant is not None:
                         key_states_quant = torch.cat([key_states_quant, key_states_quant_new], dim=2)
                     else:
                         key_states_quant = key_states_quant_new
-                    if value_states_quant is not None:
-                        value_states_quant = torch.cat([value_states_quant, value_states_quant_new], dim=2)
+                    if value_states_quant_int is not None:
+                        value_states_quant_int = torch.cat([value_states_quant_int, value_states_quant_int_new], dim=2)
+                        value_states_quant_scale = torch.cat([value_states_quant_scale, value_states_quant_scale_new], dim=2)
                     else:
-                        value_states_quant = value_states_quant_new
-            
-            if key_states_quant is None:
-                key_states_full = key_states_float
-            elif key_states_float is None:
-                key_states_full = key_states_quant
-            else:
-                key_states_full = torch.cat([key_states_quant, key_states_float], dim=2)
+                        value_states_quant_int = value_states_quant_int_new   
+                        value_states_quant_scale = value_states_quant_scale_new
+                
+                ######################################## Q x K.T ########################################
+                if key_states_quant is None:
+                    key_states_full = key_states_float
+                elif key_states_float is None:
+                    key_states_full = key_states_quant
+                else:
+                    key_states_full = torch.cat([key_states_quant, key_states_float], dim=2)
 
-            if value_states_quant is None:
-                value_states_full = value_states_float
-            elif value_states_float is None:
-                value_states_full = value_states_quant
-            else:
-                value_states_full = torch.cat([value_states_quant, value_states_float], dim=2)
-            
-            # Rotary Positional Embedding (RoPE) after quantization
-            cos_q, sin_q, cos_k, sin_k = self.rotary_emb_post_quant(value_states_full, position_ids, position_ids_cache)
-            query_states, key_states_full = apply_rotary_pos_emb_post_quant(query_states, key_states_full, cos_q, sin_q, cos_k, sin_k)
+                cos_q, sin_q, cos_k, sin_k = self.rotary_emb_post_quant(key_states_full, position_ids, position_ids_cache)
+                query_states, key_states_full = apply_rotary_pos_emb_post_quant(query_states, key_states_full, cos_q, sin_q, cos_k, sin_k)
 
-            # tmp for test
-            query_states_tmp, key_states_tmp = apply_rotary_pos_emb_post_quant(query_states, key_states_tmp, cos_q, sin_q, cos_k, sin_k) 
-            key_states_tmp = repeat_kv(key_states_tmp, self.num_key_value_groups)
-            attn_weights_tmp = torch.matmul(query_states, key_states_tmp.transpose(2, 3)) / math.sqrt(self.head_dim)
-
-            # For GQA, repeat k/v heads if n_kv_heads < n_heads
-            key_states_full = repeat_kv(key_states_full, self.num_key_value_groups)
-            value_states_full = repeat_kv(value_states_full, self.num_key_value_groups)
-
-            # print(f'Key Quant Error Post-RoPE: {(key_states_tmp - key_states_full).to(torch.float32).pow(2).mean() * 1e3}')
-
-
-            attn_weights = torch.matmul(query_states, key_states_full.transpose(2, 3)) / math.sqrt(self.head_dim)
-            if attn_weights.size() != (bsz, self.num_heads, q_len, kv_seq_len):
-                raise ValueError(
-                    f"Attention weights should be of size {(bsz, self.num_heads, q_len, kv_seq_len)}, but is"
-                    f" {attn_weights.size()}"
-                )
-            if attention_mask is not None:
-                if attention_mask.size() != (bsz, 1, q_len, kv_seq_len):
+                key_states_full = repeat_kv(key_states_full, self.num_key_value_groups)
+                attn_weights = torch.matmul(query_states, key_states_full.transpose(2, 3)) / math.sqrt(self.head_dim)
+                if attn_weights.size() != (bsz, self.num_heads, q_len, kv_seq_len):
                     raise ValueError(
-                        f"Attention mask should be of size {(bsz, 1, q_len, kv_seq_len)}, but is {attention_mask.size()}"
+                        f"Attention weights should be of size {(bsz, self.num_heads, q_len, kv_seq_len)}, but is"
+                        f" {attn_weights.size()}"
                     )
-                attn_weights = attn_weights + attention_mask
-                attn_weights = torch.max(
-                    attn_weights, torch.tensor(torch.finfo(attn_weights.dtype).min)
-                )
-
-                # tmp for test
-                attn_weights_tmp = attn_weights_tmp + attention_mask
-                attn_weights_tmp = torch.max(
-                    attn_weights_tmp, torch.tensor(torch.finfo(attn_weights_tmp.dtype).min)
-                )
-            
-            # tmp for test
-            attn_weights_tmp = nn.functional.softmax(
-                attn_weights_tmp, dim=-1, dtype=torch.float32
-            ).to(query_states.dtype)
-
-            # upcast attention to fp32
-            attn_weights = nn.functional.softmax(
-                attn_weights, dim=-1, dtype=torch.float32
-            ).to(query_states.dtype)
-
-            # tmp for test
-            # print(f'Attn Score Error: {(attn_weights - attn_weights_tmp).to(torch.float32).pow(2).mean() * 1e6}')
-
-
-            attn_output = torch.matmul(attn_weights, value_states_full) 
+                if attention_mask is not None:
+                    if attention_mask.size() != (bsz, 1, q_len, kv_seq_len):
+                        raise ValueError(
+                            f"Attention mask should be of size {(bsz, 1, q_len, kv_seq_len)}, but is {attention_mask.size()}"
+                        )
+                    attn_weights = attn_weights + attention_mask
+                    attn_weights = torch.max(
+                        attn_weights, torch.tensor(torch.finfo(attn_weights.dtype).min)
+                    )
+                # upcast attention to fp32
+                attn_weights = nn.functional.softmax(
+                    attn_weights, dim=-1, dtype=torch.float32
+                ).to(query_states.dtype)
+                
+                ######################################## P x V #######################################
+                if value_states_quant_int is None:
+                    value_states_full = repeat_kv(value_states_float, self.num_key_value_groups)
+                    attn_output = torch.matmul(attn_weights, value_states_full) 
+                elif value_states_float is None:
+                    value_states_full_int = repeat_kv(value_states_quant_int, self.num_key_value_groups)
+                    value_states_full_scale = repeat_kv(value_states_quant_scale, self.num_key_value_groups)
+                    attn_output = quant_matmul_pv(
+                        attn_weights, 
+                        value_states_full_int, value_states_full_scale,
+                        self.quant_config, is_prefill=False
+                    ) 
+                else:
+                    value_states_full_int = repeat_kv(value_states_quant_int, self.num_key_value_groups)
+                    value_states_full_scale = repeat_kv(value_states_quant_scale, self.num_key_value_groups)
+                    value_states_full_float = repeat_kv(value_states_float, self.num_key_value_groups)
+                    value_states_float_len = value_states_float.shape[-2]
+                    attn_weights_quant = attn_weights[..., :-value_states_float_len]
+                    attn_weights_float = attn_weights[..., -value_states_float_len:]
+                    attn_output_quant = quant_matmul_pv(
+                        attn_weights_quant, 
+                        value_states_full_int, value_states_full_scale,
+                        self.quant_config, is_prefill=False
+                    ) 
+                    attn_output_float = torch.matmul(attn_weights_float, value_states_full_float) 
+                    attn_output = attn_output_quant + attn_output_float
+                    
         else: # Quantize KV-cache after the self-attention operation
             if past_key_value is None: # Prefill Stage
                 # Cache position_ids during prefill
@@ -415,6 +454,7 @@ class QuantLlamaAttention(nn.Module):
                     self.k_bias = key_states.mean(dim=2, keepdim=True)
                     self.k_scale = (key_states - self.k_bias).abs().amax(dim=2, keepdim=True).pow(0.6)
                 
+                ######################### Divide KV-cache into Quantized and Float parts #########################
                 kv_states_float_len = key_states.shape[-2] % self.kv_residual_len
                 if kv_states_float_len != 0:
                     if key_states.shape[-2] < self.kv_residual_len:
@@ -432,14 +472,107 @@ class QuantLlamaAttention(nn.Module):
                     key_states_float = None
                     value_states_quant = value_states
                     value_states_float = None
+                
+                ############################################ Q x K.T ############################################
+                cos_q, sin_q, cos_k, sin_k = self.rotary_emb_post_quant(key_states, position_ids, position_ids_cache)
+                query_states, key_states = apply_rotary_pos_emb_post_quant(query_states, key_states, cos_q, sin_q, cos_k, sin_k)
+
+                key_states = repeat_kv(key_states, self.num_key_value_groups)
+                #NOTE The "v_quant_function" here is not doing any quantization by setting "use_fp16=True".
+                # It simply returns a format that allows multiplying with quantized attn-score.
+                value_states_int, value_states_scale = v_quant_function(
+                    value_states, self.quant_config, use_fp16=True
+                ) 
+                value_states_int = repeat_kv(value_states_int, self.num_key_value_groups)
+                value_states_scale = repeat_kv(value_states_scale, self.num_key_value_groups)
+
+                if self.config.use_slow_attn: #NOTE To avoid OOM during Attention in LongBench evaluation
+                    #NOTE the number of heads processed in every iteration is hard-coded "4"
+                    assert self.num_heads % 4 == 0, \
+                        f"The number of attention heads = {self.num_heads} in this model is not divisible by 4 !"
+                    
+                    attn_output = torch.zeros_like(query_states) 
+
+                    ############################################ Q x K.T ############################################
+                    for i_h in range(0, self.num_heads // 4): #NOTE the number of heads processed in every iteration is hard-coded "4"
+                        attn_weights = torch.matmul(query_states[:, i_h*4 : (i_h+1)*4, :, :], key_states[:, i_h*4 : (i_h+1)*4, :, :].transpose(2, 3)) / math.sqrt(self.head_dim)
+                        if attn_weights.size() != (bsz, 4, q_len, kv_seq_len):
+                            raise ValueError(
+                                f"Attention weights should be of size {(bsz, 4, q_len, kv_seq_len)}, but is"
+                                f" {attn_weights.size()}"
+                            )
+                        if attention_mask is not None:
+                            if attention_mask.size() != (bsz, 1, q_len, kv_seq_len):
+                                raise ValueError(
+                                    f"Attention mask should be of size {(bsz, 1, q_len, kv_seq_len)}, but is {attention_mask.size()}"
+                                )
+                            attn_weights = attn_weights + attention_mask
+                            attn_weights = torch.max(
+                                attn_weights, torch.tensor(torch.finfo(attn_weights.dtype).min)
+                            )    
+                        # upcast attention to fp32
+                        attn_weights = nn.functional.softmax(
+                            attn_weights, dim=-1, dtype=torch.float32
+                        ).to(query_states.dtype)
+
+                        ############################################# P x V ############################################
+                        attn_output[:, i_h*4 : (i_h+1)*4, :, :] = quant_matmul_pv(
+                            attn_weights, 
+                            value_states_int[:, i_h*4 : (i_h+1)*4, :, :], value_states_scale[:, i_h*4 : (i_h+1)*4, :, :],
+                            self.quant_config, is_prefill=True
+                        ) 
+                else:
+                    ############################################ Q x K.T ############################################
+                    attn_weights = torch.matmul(query_states, key_states.transpose(2, 3)) / math.sqrt(self.head_dim)
+                    if attn_weights.size() != (bsz, self.num_heads, q_len, kv_seq_len):
+                        raise ValueError(
+                            f"Attention weights should be of size {(bsz, self.num_heads, q_len, kv_seq_len)}, but is"
+                            f" {attn_weights.size()}"
+                        )
+                    if attention_mask is not None:
+                        if attention_mask.size() != (bsz, 1, q_len, kv_seq_len):
+                            raise ValueError(
+                                f"Attention mask should be of size {(bsz, 1, q_len, kv_seq_len)}, but is {attention_mask.size()}"
+                            )
+                        attn_weights = attn_weights + attention_mask
+                        attn_weights = torch.max(
+                            attn_weights, torch.tensor(torch.finfo(attn_weights.dtype).min)
+                        )    
+                    # upcast attention to fp32
+                    attn_weights = nn.functional.softmax(
+                        attn_weights, dim=-1, dtype=torch.float32
+                    ).to(query_states.dtype)
+
+                    ############################################# P x V ############################################
+                    attn_output = quant_matmul_pv(
+                        attn_weights, 
+                        value_states_int, value_states_scale,
+                        self.quant_config, is_prefill=True
+                    ) 
+
+                ####################################### Quantize KV-cache ######################################
+                if (key_states_quant is not None) and (value_states_quant is not None):
+                    key_states_quant = k_quant_function(
+                        key_states_quant, self.quant_config, 
+                        k_bias=self.k_bias, k_scale=self.k_scale
+                    )  
+                    value_states_quant_int, value_states_quant_scale = v_quant_function(
+                        value_states_quant, self.quant_config, 
+                    ) 
+                else:
+                    key_states_quant = None
+                    value_states_quant_int = None
+                    value_states_quant_scale = None
             else: # Decoding Stage
                 # Update position_ids cache during decoding
                 position_ids_cache = torch.cat([past_key_value[-2], position_ids], dim=-1)
 
+                ############################## Prepare Quantized and Float KV-cache ##############################
                 key_states_quant = past_key_value[0] # quantized key
                 key_states_float = past_key_value[1] # full-precision residual key
-                value_states_quant = past_key_value[2] # quantized value
-                value_states_float = past_key_value[3] # full-precision residual value
+                value_states_quant_int = past_key_value[2] # quantized value integer
+                value_states_quant_scale = past_key_value[3] # quantized value scale
+                value_states_float = past_key_value[4] # full-precision residual value
 
                 if key_states_float is not None:
                     key_states_float = torch.cat([key_states_float, key_states], dim=2)
@@ -449,76 +582,81 @@ class QuantLlamaAttention(nn.Module):
                     value_states_float = torch.cat([value_states_float, value_states], dim=2)
                 else:
                     value_states_float = value_states
-
-            if key_states_quant is None:
-                key_states_full = key_states_float
-            elif key_states_float is None:
-                key_states_full = key_states_quant
-            else:
-                key_states_full = torch.cat([key_states_quant, key_states_float], dim=2)
-            
-            if value_states_quant is None:
-                value_states_full = value_states_float
-            elif value_states_float is None:
-                value_states_full = value_states_quant
-            else:
-                value_states_full = torch.cat([value_states_quant, value_states_float], dim=2)
-
-            # Rotary Positional Embedding (RoPE) after quantization
-            cos_q, sin_q, cos_k, sin_k = self.rotary_emb_post_quant(value_states_full, position_ids, position_ids_cache)
-            query_states, key_states_full_rope = apply_rotary_pos_emb_post_quant(query_states, key_states_full, cos_q, sin_q, cos_k, sin_k)
-
-            # For GQA, repeat k/v heads if n_kv_heads < n_heads
-            key_states_full_rope = repeat_kv(key_states_full_rope, self.num_key_value_groups)
-            value_states_full = repeat_kv(value_states_full, self.num_key_value_groups)
-            
-            attn_weights = torch.matmul(query_states, key_states_full_rope.transpose(2, 3)) / math.sqrt(self.head_dim)
-            if attn_weights.size() != (bsz, self.num_heads, q_len, kv_seq_len):
-                raise ValueError(
-                    f"Attention weights should be of size {(bsz, self.num_heads, q_len, kv_seq_len)}, but is"
-                    f" {attn_weights.size()}"
-                )
-            if attention_mask is not None:
-                if attention_mask.size() != (bsz, 1, q_len, kv_seq_len):
-                    raise ValueError(
-                        f"Attention mask should be of size {(bsz, 1, q_len, kv_seq_len)}, but is {attention_mask.size()}"
-                    )
-                attn_weights = attn_weights + attention_mask
-                attn_weights = torch.max(
-                    attn_weights, torch.tensor(torch.finfo(attn_weights.dtype).min)
-                )
                 
-            # upcast attention to fp32
-            attn_weights = nn.functional.softmax(
-                attn_weights, dim=-1, dtype=torch.float32
-            ).to(query_states.dtype)
-            attn_output = torch.matmul(attn_weights, value_states_full) 
+                ######################################## Q x K.T ########################################
+                if key_states_quant is None:
+                    key_states_full = key_states_float
+                elif key_states_float is None:
+                    key_states_full = key_states_quant
+                else:
+                    key_states_full = torch.cat([key_states_quant, key_states_float], dim=2)
 
-            # Quantize KV-cache after Self-Attn
-            if past_key_value is None: # Prefill Stage
-                if (key_states_quant is not None) and (value_states_quant is not None):
-                    key_states_quant, value_states_quant = kv_quant_function(
-                        key_states_quant, value_states_quant,
-                        self.quant_config, k_bias=self.k_bias, k_scale=self.k_scale
-                    )    
-            else: # Decoding Stage
-                if key_states_float.shape[-2] == self.kv_residual_len:
-                    key_states_quant_new, value_states_quant_new = kv_quant_function(
-                        key_states_float, value_states_float,
-                        self.quant_config, k_bias=self.k_bias, k_scale=self.k_scale
+                cos_q, sin_q, cos_k, sin_k = self.rotary_emb_post_quant(key_states_full, position_ids, position_ids_cache)
+                query_states, key_states_full = apply_rotary_pos_emb_post_quant(query_states, key_states_full, cos_q, sin_q, cos_k, sin_k)
+
+                key_states_full = repeat_kv(key_states_full, self.num_key_value_groups)
+                attn_weights = torch.matmul(query_states, key_states_full.transpose(2, 3)) / math.sqrt(self.head_dim)
+                if attn_weights.size() != (bsz, self.num_heads, q_len, kv_seq_len):
+                    raise ValueError(
+                        f"Attention weights should be of size {(bsz, self.num_heads, q_len, kv_seq_len)}, but is"
+                        f" {attn_weights.size()}"
                     )
+                if attention_mask is not None:
+                    if attention_mask.size() != (bsz, 1, q_len, kv_seq_len):
+                        raise ValueError(
+                            f"Attention mask should be of size {(bsz, 1, q_len, kv_seq_len)}, but is {attention_mask.size()}"
+                        )
+                    attn_weights = attn_weights + attention_mask
+                    attn_weights = torch.max(
+                        attn_weights, torch.tensor(torch.finfo(attn_weights.dtype).min)
+                    )
+                # upcast attention to fp32
+                attn_weights = nn.functional.softmax(
+                    attn_weights, dim=-1, dtype=torch.float32
+                ).to(query_states.dtype)
+                
+                ######################################## P x V #######################################
+                if value_states_quant_int is None:
+                    value_states_full = repeat_kv(value_states_float, self.num_key_value_groups)
+                    attn_output = torch.matmul(attn_weights, value_states_full) 
+                else: # value_states_float will never be None in this case
+                    value_states_float_len = value_states_float.shape[-2]
+                    value_states_full_int = repeat_kv(value_states_quant_int, self.num_key_value_groups)
+                    value_states_full_scale = repeat_kv(value_states_quant_scale, self.num_key_value_groups)
+                    value_states_full_float = repeat_kv(value_states_float, self.num_key_value_groups)
+                    attn_weights_quant = attn_weights[..., :-value_states_float_len]
+                    attn_weights_float = attn_weights[..., -value_states_float_len:]
+                    attn_output_quant = quant_matmul_pv(
+                        attn_weights_quant, 
+                        value_states_full_int, value_states_full_scale,
+                        self.quant_config, is_prefill=False
+                    ) 
+                    attn_output_float = torch.matmul(attn_weights_float, value_states_full_float) 
+                    attn_output = attn_output_quant + attn_output_float
+
+                ####################################### Quantize KV-cache ######################################
+                if key_states_float.shape[-2] == self.kv_residual_len:
+                    key_states_quant_new = k_quant_function(
+                        key_states_float, self.quant_config, 
+                        k_bias=self.k_bias, k_scale=self.k_scale
+                    )  
+                    value_states_quant_int_new, value_states_quant_scale_new = v_quant_function(
+                        value_states_float, self.quant_config
+                    ) 
                     key_states_float = None
                     value_states_float = None
                     if key_states_quant is not None:
                         key_states_quant = torch.cat([key_states_quant, key_states_quant_new], dim=2)
                     else:
                         key_states_quant = key_states_quant_new
-                    if value_states_quant is not None:
-                        value_states_quant = torch.cat([value_states_quant, value_states_quant_new], dim=2)
+                    if value_states_quant_int is not None:
+                        value_states_quant_int = torch.cat([value_states_quant_int, value_states_quant_int_new], dim=2)
+                        value_states_quant_scale = torch.cat([value_states_quant_scale, value_states_quant_scale_new], dim=2)
                     else:
-                        value_states_quant = value_states_quant_new    
+                        value_states_quant_int = value_states_quant_int_new   
+                        value_states_quant_scale = value_states_quant_scale_new
 
-        past_key_value = (key_states_quant, key_states_float, value_states_quant, value_states_float, position_ids_cache, kv_seq_len) if use_cache else None
+        past_key_value = (key_states_quant, key_states_float, value_states_quant_int, value_states_quant_scale, value_states_float, position_ids_cache, kv_seq_len) if use_cache else None
 
         if attn_output.size() != (bsz, self.num_heads, q_len, self.head_dim):
             raise ValueError(
