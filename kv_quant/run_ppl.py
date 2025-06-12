@@ -19,6 +19,7 @@ from utils import (
     add_quant_args, 
     get_quant_config,
     set_seed,
+    model2path
 )
 
     
@@ -61,7 +62,7 @@ def eval_ppl(model, tokenizer, args, device="cuda"):
             model_family = '_'.join(model_net.lower().split('-')[:-1])
             model.seq_len = args.seq_len
 
-            cache_testloader = f'/home/yc2367/llm/P2-LLM/data_cache/testloader_{model_family}_c4_{args.seq_len}.cache'
+            cache_testloader = f'/home/yc2367/llm/SerialPIM/data_cache/testloader_{model_family}_c4_{args.seq_len}.cache'
             os.makedirs(os.path.dirname(cache_testloader), exist_ok=True)
             if os.path.exists(cache_testloader):
                 testenc = torch.load(cache_testloader)
@@ -116,10 +117,9 @@ if __name__ == '__main__':
     parser.add_argument("--verbose", action="store_true", help="Whether to print verbose information or not.")
     parser.add_argument("--output_dir", type=str, default="results/ppl", help="output directory")
     args = parser.parse_args()  
+    
     quant_config = get_quant_config(args)
     model_name = args.model_name
-
-    model2path = json.load(open("config/model2path.json", "r"))
     model_name_or_path = model2path[model_name]
 
     logger.remove()

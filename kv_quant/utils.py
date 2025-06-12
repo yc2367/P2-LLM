@@ -7,6 +7,10 @@ from transformers import AutoTokenizer, AutoModelForCausalLM, AutoConfig, LlamaC
 from models import QuantLlamaForCausalLM
 from quantize import QuantConfig
 
+import json
+import os
+model2path = json.load(open(os.path.join(os.path.dirname(__file__), "model2path.json"), "r"))
+
 
 def add_common_args(parser: argparse.ArgumentParser):
     parser.add_argument('--model_name', type=str, help="model to load")

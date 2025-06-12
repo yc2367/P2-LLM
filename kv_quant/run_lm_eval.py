@@ -1,11 +1,4 @@
 # Import necessary modules
-from utils import (
-    load_model_and_tokenizer, 
-    add_common_args, 
-    add_quant_args, 
-    get_quant_config,
-    set_seed,
-)
 import argparse
 import torch
 import lm_eval
@@ -20,6 +13,15 @@ import json
 import warnings
 # Ignore all warnings
 warnings.filterwarnings("ignore")
+
+from utils import (
+    load_model_and_tokenizer, 
+    add_common_args, 
+    add_quant_args, 
+    get_quant_config,
+    set_seed,
+    model2path
+)
 
 
 def run_lm_eval_zero_shot(
@@ -65,10 +67,9 @@ if __name__ == '__main__':
     parser.add_argument("--apply_chat_template", action="store_true", help="Whether to apply chat template or not.")
     parser.add_argument("--output_dir", type=str, default="results/lm_eval", help="output directory")
     args = parser.parse_args()  
+    
     quant_config = get_quant_config(args)
     model_name = args.model_name
-
-    model2path = json.load(open("config/model2path.json", "r"))
     model_name_or_path = model2path[model_name]
 
     logger.remove()

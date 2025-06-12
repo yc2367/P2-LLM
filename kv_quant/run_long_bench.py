@@ -16,8 +16,9 @@ from utils import (
     add_quant_args, 
     get_quant_config,
     set_seed,
+    model2path
 )
-from longbench_utils import scorer 
+from longbench_utils import scorer, model2maxlen, dataset2prompt, dataset2maxlen
 
 
 # This is the customized building prompt for chat models
@@ -95,11 +96,9 @@ if __name__ == '__main__':
     add_quant_args(parser)
     parser.add_argument("--output_dir", type=str, default="results/long_bench", help="output directory")
     args = parser.parse_args()
+
     quant_config = get_quant_config(args)
     model_name = args.model_name
-
-    model2path = json.load(open("config/model2path.json", "r"))
-    model2maxlen = json.load(open("config/model2maxlen.json", "r"))
     model_name_or_path = model2path[model_name]
     max_length = model2maxlen[model_name]
 
@@ -129,8 +128,6 @@ if __name__ == '__main__':
 
     logger.info("#################### Start running LongBench evaluation ... ####################")
     datasets = ["triviaqa", "qasper", "trec", "samsum", "lcc", "repobench-p", "qmsum", "multi_news"]
-    dataset2prompt = json.load(open("config/dataset2prompt.json", "r"))
-    dataset2maxlen = json.load(open("config/dataset2maxlen.json", "r"))
     for dataset in datasets:
         data = load_dataset('THUDM/LongBench', dataset, split='test')
 
