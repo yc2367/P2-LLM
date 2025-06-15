@@ -108,6 +108,8 @@ if __name__ == '__main__':
     logger.info(f"* Model: {model_name_or_path}")
     logger.info(f"#################### Start evaluating ppl with the following configurations: ####################")
     logger.info(f"* Bench compression!!!")
+    logger.info(f"* Attn-Score bits during Prefill: {args.p_bits_pf}")
+    logger.info(f"* Attn-Score bits during Decode: {args.p_bits_dc}")
     logger.info(f"* KV-cache quantization method: {args.kv_quant_method}")
     logger.info(f"* Key bits: {args.k_bits}")
     logger.info(f"* Value bits: {args.v_bits}")
@@ -124,9 +126,10 @@ if __name__ == '__main__':
     os.makedirs(output_dir, exist_ok=True)
 
     logger.info("#################### Loading model and tokenizer ... ####################")
-    model, tokenizer = load_model_and_tokenizer(model_name_or_path, quant_config=quant_config, use_slow_attn=True, use_fp16=args.use_fp16)
+    model, tokenizer = load_model_and_tokenizer(model_name_or_path, quant_config=quant_config, max_memory=args.max_memory, use_slow_attn=True, use_fp16=args.use_fp16)
 
     logger.info("#################### Start running LongBench evaluation ... ####################")
+    scores = dict()
     datasets = ["triviaqa", "qasper", "trec", "samsum", "lcc", "repobench-p", "qmsum", "multi_news"]
     for dataset in datasets:
         data = load_dataset('THUDM/LongBench', dataset, split='test')
@@ -148,7 +151,6 @@ if __name__ == '__main__':
                 f.write('\n')
 
         # calculate score
-        scores = dict()
         predictions, answers, lengths = [], [], []
         for pred in preds:
             predictions.append(pred["pred"])
@@ -168,4 +170,4 @@ if __name__ == '__main__':
     # store full results
     output_res_file_path = os.path.join(output_dir, f"longbench_full_result.json")
     with open(output_res_file_path, "w") as f:
-        json.dump(scores, f, ensure_ascii=False, indent=4)
+        json.dump(scores, f, indent=4)

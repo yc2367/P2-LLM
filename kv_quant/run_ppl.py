@@ -62,7 +62,7 @@ def eval_ppl(model, tokenizer, args, device="cuda"):
             model_family = '_'.join(model_net.lower().split('-')[:-1])
             model.seq_len = args.seq_len
 
-            cache_testloader = f'/home/yc2367/llm/SerialPIM/data_cache/testloader_{model_family}_c4_{args.seq_len}.cache'
+            cache_testloader = f'/home/yc2367/llm/P2-LLM/data_cache/testloader_{model_family}_c4_{args.seq_len}.cache'
             os.makedirs(os.path.dirname(cache_testloader), exist_ok=True)
             if os.path.exists(cache_testloader):
                 testenc = torch.load(cache_testloader)
@@ -130,6 +130,7 @@ if __name__ == '__main__':
     logger.info(f"* sequence length {args.seq_len}")
     logger.info(f"#################### Start evaluating ppl with the following configurations: ####################")
     logger.info(f"* Bench compression!!!")
+    logger.info(f"* Attn-Score bits during Prefill: {args.p_bits_pf}")
     logger.info(f"* KV-cache quantization method: {args.kv_quant_method}")
     logger.info(f"* Key bits: {args.k_bits}")
     logger.info(f"* Value bits: {args.v_bits}")

@@ -178,8 +178,8 @@ def p_quant_per_block(
     if q_bits == 8:
         x_fp_tmp = x_fp.view(torch.int16)
         x_fp_lsb = x_fp_tmp.bitwise_and(127)
-        x_dq     = x_fp_tmp.bitwise_and(65408)
-
+        x_dq     = x_fp_tmp.bitwise_and(65408) 
+            
         roundup_mask = x_fp_lsb.gt(63)
         x_dq[roundup_mask] = x_dq[roundup_mask] + 128
         x_dq = x_dq.view(torch.float16)

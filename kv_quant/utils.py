@@ -4,6 +4,9 @@ import numpy as np
 import random, torch
 from functools import reduce
 from transformers import AutoTokenizer, AutoModelForCausalLM, AutoConfig, LlamaConfig
+from accelerate import infer_auto_device_map, dispatch_model
+from accelerate.utils.modeling import get_balanced_memory
+
 from models import QuantLlamaForCausalLM
 from quantize import QuantConfig
 
@@ -15,6 +18,17 @@ model2path = json.load(open(os.path.join(os.path.dirname(__file__), "model2path.
 def add_common_args(parser: argparse.ArgumentParser):
     parser.add_argument('--model_name', type=str, help="model to load")
     parser.add_argument('--use_fp16', action="store_true", default=False, help="Whether to use the original FP16 model.")
+    # max memory to offload larger models to CPU
+    parser.add_argument(
+        "--max_memory",
+        type=str,
+        nargs="*",
+        default="",
+        help="List of device_id:max_memory pairs to be parsed into a dictionary; "
+        + "Example: 0:10GiB 1:10GiB cpu:30GiB; "
+        + "mode details here: "
+        + "https://huggingface.co/docs/accelerate/usage_guides/big_modeling",
+    )
     return parser
 
 
@@ -87,7 +101,7 @@ def get_module_by_name(module, module_name):
     return reduce(getattr, names, module)
 
 
-def load_model_and_tokenizer(model_name_or_path, quant_config=None, device_map="cuda", use_fp16: bool=False, use_slow_attn: bool=False):
+def load_model_and_tokenizer(model_name_or_path, quant_config=None, device_map="cuda", max_memory: str="", use_fp16: bool=False, use_slow_attn: bool=False):
     """
     Args:
         model_name_or_path: The model to be evaluated.
@@ -98,6 +112,15 @@ def load_model_and_tokenizer(model_name_or_path, quant_config=None, device_map="
     Returns:
         `tuple(torch.Tensor)` comprising of the query and key tensors rotated using the Rotary Position Embedding.
     """
+
+    max_memory = [v.split(":") for v in (max_memory or [])]
+    max_memory = {(int(k) if k.isdigit() else k): v for k, v in max_memory}
+
+    tokenizer = AutoTokenizer.from_pretrained(
+        model_name_or_path,
+        trust_remote_code=True,
+    )
+
     if 'llama' in model_name_or_path.lower():
         config = LlamaConfig.from_pretrained(model_name_or_path)
         if use_fp16:
@@ -106,7 +129,7 @@ def load_model_and_tokenizer(model_name_or_path, quant_config=None, device_map="
                 model_name_or_path,
                 config=config,
                 torch_dtype=torch.float16,
-                device_map=device_map
+                low_cpu_mem_usage=True
             )
         else:
             config.use_slow_attn = use_slow_attn
@@ -114,7 +137,7 @@ def load_model_and_tokenizer(model_name_or_path, quant_config=None, device_map="
                 model_name_or_path,
                 config=config,
                 torch_dtype=torch.float16,
-                device_map=device_map,
+                low_cpu_mem_usage=True,
                 quant_config=quant_config
             )
     else:
@@ -122,12 +145,27 @@ def load_model_and_tokenizer(model_name_or_path, quant_config=None, device_map="
             model_name_or_path,
             torch_dtype=torch.float16,
             trust_remote_code=True,
-            device_map=device_map,
+            low_cpu_mem_usage=True
         )
-    tokenizer = AutoTokenizer.from_pretrained(
-        model_name_or_path,
-        trust_remote_code=True,
-    )
+
+    model.eval() 
     
-    model.eval()        
+    # Move the model to GPU (as much as possible) for LM evaluation
+    # Ref: https://github.com/mit-han-lab/llm-awq/blob/576991bc3a018adc3b0c8f5f488463784cd6f880/awq/entry.py#L250
+    kwargs = {
+        "max_memory": get_balanced_memory(
+            model, max_memory if len(max_memory) > 0 else None
+        )
+    }
+    print(max_memory)
+    device_map = infer_auto_device_map(
+        model,
+        no_split_module_classes=[
+            "LlamaDecoderLayer",
+            "DecoderLayer",
+        ],
+        **kwargs
+    )
+    model = dispatch_model(model, device_map=device_map)
+
     return model, tokenizer
