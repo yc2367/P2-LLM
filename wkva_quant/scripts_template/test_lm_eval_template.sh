@@ -15,11 +15,11 @@ num_fewshot=8
 batch_size=8
 
 k_bits_list=(4)
-v_bits_list=(3)
-k_group_size_list=(64)
+v_bits_list=(4)
+k_group_size_list=(128)
 v_group_size_list=(128)
 kv_residual_len_list=(4 8)
-p_bits_list=(8 16)
+p_bits_list=(8)
 
 w_bits_list=(4)
 w_group_size_list=(64 32)
@@ -42,7 +42,7 @@ do
                     do
                         for w_bits in "${w_bits_list[@]}"
                         do
-                            for v_group_size in "${v_group_size_list[@]}"
+                            for w_group_size in "${w_group_size_list[@]}"
                             do
                                 for p_bits in "${p_bits_list[@]}"
                                 do
@@ -77,13 +77,6 @@ do
                                             --output_dir ${OUTPUT_DIR} \
                                             --w_bits ${w_bits} --w_group_size ${w_group_size} \
                                             --awq_model_path_lp ${AWQ_DIR}/${model_name}/w${w_bits}-g${w_group_size}
-                                        
-                                        python ${HOME_DIR}/run_lm_eval.py --model_name ${model_name} \
-                                            --tasks ${task_list} --batch_size ${batch_size} --limit ${limit} \
-                                            --num_fewshot ${num_fewshot} --fewshot_as_multiturn --apply_chat_template \
-                                            --output_dir ${OUTPUT_DIR} \
-                                            --w_bits 6 --w_group_size 128 \
-                                            --awq_model_path_lp ${AWQ_DIR}/${model_name}/w6-g128
                                         
                                         ####################  KTVT  ####################
                                         python ${HOME_DIR}/run_lm_eval.py --model_name ${model_name} \

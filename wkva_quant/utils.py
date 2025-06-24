@@ -100,7 +100,7 @@ def get_module_by_name(module, module_name):
 def load_model_and_tokenizer(model_name, quant_config=None, device_map="cuda:0", use_fp16: bool=False, use_slow_attn: bool=False):
     """
     Args:
-        model_name_or_path: The model to be evaluated.
+        model_name: The model to be evaluated.
         quant_config: The quantization configuration. Will be discarded if "use_fp16=True".
         device_map: "cpu" or "cuda".
         use_fp16: If set to True, then evaluate the original FP16 model.
@@ -111,8 +111,8 @@ def load_model_and_tokenizer(model_name, quant_config=None, device_map="cuda:0",
 
     model_path_fp16 = model2path[model_name]
 
-    if 'llama' in model_name_or_path.lower():
-        config = LlamaConfig.from_pretrained(model_name_or_path)
+    if 'llama' in model_path_fp16.lower():
+        config = LlamaConfig.from_pretrained(model_path_fp16)
         if use_fp16:
             from transformers import LlamaForCausalLM
             model = LlamaForCausalLM.from_pretrained(
@@ -161,7 +161,7 @@ def load_model_and_tokenizer(model_name, quant_config=None, device_map="cuda:0",
         )
     
     tokenizer = AutoTokenizer.from_pretrained(
-        model_name_or_path,
+        model_path_fp16,
         trust_remote_code=True,
     )
 

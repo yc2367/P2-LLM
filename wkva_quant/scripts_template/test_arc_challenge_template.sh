@@ -12,11 +12,11 @@ task_list="arc_challenge_chat"
 batch_size=16
 
 k_bits_list=(4)
-v_bits_list=(3)
+v_bits_list=(4)
 k_group_size_list=(64)
 v_group_size_list=(128)
 kv_residual_len_list=(1 4)
-p_bits_list=(8 16)
+p_bits_list=(8)
 
 w_bits_list=(4)
 w_group_size_list=(64 32)
@@ -39,7 +39,7 @@ do
                     do
                         for w_bits in "${w_bits_list[@]}"
                         do
-                            for v_group_size in "${v_group_size_list[@]}"
+                            for w_group_size in "${w_group_size_list[@]}"
                             do
                                 for p_bits in "${p_bits_list[@]}"
                                 do

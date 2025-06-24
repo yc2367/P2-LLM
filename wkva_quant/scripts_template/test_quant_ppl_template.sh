@@ -38,7 +38,7 @@ do
                     do
                         for w_bits in "${w_bits_list[@]}"
                         do
-                            for v_group_size in "${v_group_size_list[@]}"
+                            for w_group_size in "${w_group_size_list[@]}"
                             do
                                 for p_bits in "${p_bits_list[@]}"
                                 do

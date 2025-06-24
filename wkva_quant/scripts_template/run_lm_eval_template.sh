@@ -12,7 +12,7 @@ this_file=$(basename $0)
 this_file=${this_file%.*}
 output_file=${OUTPUT_DIR}/${this_file}.txt
 
-if [ -f $(output_file) ]; then
+if [ -f ${output_file} ]; then
     rm ${output_file}
 fi
 touch ${output_file}

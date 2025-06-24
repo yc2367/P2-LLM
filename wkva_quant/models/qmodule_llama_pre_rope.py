@@ -443,7 +443,7 @@ class QuantLlamaAttention(nn.Module):
                     attn_output_quant = quant_matmul_pv(
                         attn_weights_quant, 
                         value_states_full_int, value_states_full_scale,
-                        self.quant_config, is_prefill=False
+                        self.quant_config,  # is_prefill=False
                     ) 
                     attn_output_float = torch.matmul(attn_weights_float, value_states_full_float) 
                     attn_output = attn_output_quant + attn_output_float
@@ -644,7 +644,7 @@ class QuantLlamaAttention(nn.Module):
                     attn_output_quant = quant_matmul_pv(
                         attn_weights_quant, 
                         value_states_full_int, value_states_full_scale,
-                        self.quant_config, is_prefill=False
+                        self.quant_config,  # is_prefill=False
                     ) 
                     attn_output_float = torch.matmul(attn_weights_float, value_states_full_float) 
                     attn_output = attn_output_quant + attn_output_float
@@ -1048,7 +1048,7 @@ class QuantLlamaForCausalLM(LlamaPreTrainedModel):
         return_dict = return_dict if return_dict is not None else self.config.use_return_dict
 
         #NOTE (Yuzong): Prefill-Decode Disaggregation
-        if past_key_value is None:  # prefill
+        if past_key_values is None:  # prefill
             #NOTE (Yuzong): If applying model disaggregation, move tensors to the correct device
             if self.apply_w_disag:
                 input_ids      = input_ids.to(self.model_prefill.device)
@@ -1058,7 +1058,7 @@ class QuantLlamaForCausalLM(LlamaPreTrainedModel):
                 self.kv_cache_transfered = False
             
             outputs = self.model_prefill(
-                inputs_ids=inputs_ids,
+                input_ids=input_ids,
                 attention_mask=attention_mask,
                 position_ids=position_ids,
                 past_key_values=past_key_values,

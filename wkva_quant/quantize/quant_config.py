@@ -18,7 +18,7 @@ class QuantConfig(dict):
         # Weight quantization config
         awq_model_path_lp: Optional[str]=None,  # low-precision model directory
         apply_w_disag: bool=False,              # whether to apply prefill-decode disaggregation for weights
-        awq_model_path_hp: Optional{str}=None,  # high-precision model directory
+        awq_model_path_hp: Optional[str]=None,  # high-precision model directory
         # KV-cache quantization config
         kv_quant_method: str="KTVT",
         kv_residual_len: int=1,

@@ -86,7 +86,7 @@ def k_quant_per_token(
     rmin = torch.amin(x_fp_new, dim=-1, keepdim=True)
     rmax = torch.amax(x_fp_new, dim=-1, keepdim=True)
     scale_fp = (rmax - rmin) / (qmax - qmin)
-    scale_fp = scale_fp.clamp(min=1e-5, max=1e5)
+    scale_fp = scale_fp.clamp_(min=1e-6)
     zeropoint = (torch.round(-rmin / scale_fp)).clamp_(qmin, qmax)
     x_q  = torch.clamp(torch.round(x_fp_new / scale_fp) + zeropoint, min=qmin, max=qmax)
     x_dq = (x_q - zeropoint) * scale_fp # de-quantized tensor
@@ -131,7 +131,7 @@ def k_quant_per_channel(
     rmin = torch.amin(x_fp_new, dim=-2, keepdim=True)
     rmax = torch.amax(x_fp_new, dim=-2, keepdim=True)
     scale_fp = (rmax - rmin) / (qmax - qmin)
-    scale_fp = scale_fp.clamp(min=1e-5, max=1e5)
+    scale_fp = scale_fp.clamp_(min=1e-6)
     zeropoint = -rmin
     q_tensor = torch.clamp(torch.round((x_fp_new + zeropoint) / scale_fp), min=qmin, max=qmax)
     x_dq = (q_tensor * scale_fp) - zeropoint
@@ -170,7 +170,7 @@ def v_quant_per_token(
     rmin = torch.amin(x_fp_new, dim=-1, keepdim=True)
     rmax = torch.amax(x_fp_new, dim=-1, keepdim=True)
     scale_fp = (rmax - rmin) / (qmax - qmin)
-    scale_fp = scale_fp.clamp(min=1e-5, max=1e5)
+    scale_fp = scale_fp.clamp_(min=1e-6)
     zeropoint = (torch.round(-rmin / scale_fp)).clamp_(qmin, qmax)
     x_q = torch.clamp(torch.round(x_fp_new / scale_fp) + zeropoint, min=qmin, max=qmax)
     x_q = x_q - zeropoint
@@ -234,7 +234,7 @@ def p_quant_per_block(
     qmax = 2**(q_bits - 1) - 1
     qmin = -qmax
     scale_fp = rmax / qmax
-    scale_fp = scale_fp.clamp(min=1e-5, max=1e5)
+    scale_fp = scale_fp.clamp_(min=1e-6)
     x_q = torch.clamp(torch.round(x_fp / scale_fp), min=qmin, max=qmax)
     x_dq = x_q * scale_fp
 
@@ -296,17 +296,15 @@ def v_quant_function(
 
 
 def quant_matmul_pv(
-    p_fp, v_int, v_scale, quant_config, is_prefill: bool=False
+    p_fp, v_int, v_scale, quant_config
 ):
     """
     p_fp:    batch, num_head, q_seq_len, kv_seq_len
     v_int:   batch, num_head, kv_seq_len, h_dim
     v_scale: batch, num_head, kv_seq_len, num_groups_per_head
     """
-    if is_prefill:
-        p_bits = quant_config.p_bits_pf
-    else:
-        p_bits = quant_config.p_bits_dc
+    
+    p_bits = quant_config.p_bits
     
     batch, num_head, kv_seq_len, h_dim = v_int.shape
     v_group_size = quant_config.v_group_size
