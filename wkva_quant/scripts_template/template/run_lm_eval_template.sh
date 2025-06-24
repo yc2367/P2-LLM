@@ -1,6 +1,10 @@
 #!/bin/bash
 
-SCRIPTS_DIR="/home/yc2367/llm/P2-LLM/wkva_quant/scripts"
+########## Modify the path according to your HOME directory ##########
+HOME_DIR="/home/yc2367/llm/P2-LLM/wkva_quant"
+######################################################################
+
+SCRIPTS_DIR="${HOME_DIR}/scripts_template"
 OUTPUT_DIR=${SCRIPTS_DIR}/output
 mkdir -p ${OUTPUT_DIR}
 

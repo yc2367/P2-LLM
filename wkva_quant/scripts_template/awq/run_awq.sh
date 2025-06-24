@@ -4,7 +4,8 @@
 HOME_DIR="/home/yc2367/llm/P2-LLM/3rdparty/llm-awq"
 
 model_name_list=("llama-2-7b" "llama-2-13b" "llama-3.1-8b" "llama-3.2-3b" "llama-3.1-8b-ins" "llama-3.2-3b-ins")
-w_bit_list=(8 4)
+w_bit_list=(4)
+group_size_list=(128 64 32)
 
 
 for model_name in "${model_name_list[@]}"
@@ -31,14 +32,6 @@ do
 
     for w_bit in "${w_bit_list[@]}"
     do
-        if [ ${w_bit} = 8 ] 
-        then
-            group_size_list=(256)
-        elif [ ${w_bit} = 4 ] 
-        then 
-            group_size_list=(128 64 32)
-        fi
-
         for group_size in "${group_size_list[@]}"
         do
             awq_cache_path=${HOME_DIR}/awq_cache/${model_name}-w${w_bit}-g${group_size}.pt

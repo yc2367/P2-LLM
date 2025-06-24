@@ -1,7 +1,10 @@
 #!/bin/bash
 
+########## Modify the path according to your HOME directory ##########
 HOME_DIR="/home/yc2367/llm/P2-LLM/wkva_quant"
 AWQ_DIR="/share/abdelfattah/temp_yc2367/awq_quant_model"
+######################################################################
+
 OUTPUT_DIR=${HOME_DIR}/results/ppl
 
 model_list=("llama-2-7b" "llama-2-13b" "llama-3.1-8b" "llama-3.2-3b")

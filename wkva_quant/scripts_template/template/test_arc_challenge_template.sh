@@ -1,7 +1,10 @@
 #!/bin/bash
 
+########## Modify the path according to your HOME directory ##########
 HOME_DIR="/home/yc2367/llm/P2-LLM/wkva_quant"
 AWQ_DIR="/share/abdelfattah/temp_yc2367/awq_quant_model"
+######################################################################
+
 OUTPUT_DIR=${HOME_DIR}/results/arc_challenge
 
 model_list=("llama-3.2-3b-ins" "llama-3.1-8b-ins")

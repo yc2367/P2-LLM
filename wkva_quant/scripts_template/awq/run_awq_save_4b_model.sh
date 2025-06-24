@@ -2,6 +2,7 @@
 
 
 HOME_DIR="/home/yc2367/llm/P2-LLM/3rdparty/llm-awq"
+AWQ_DIR="/share/abdelfattah/temp_yc2367/awq_quant_model"
 
 model_name_list=("llama-2-7b" "llama-2-13b" "llama-3.1-8b" "llama-3.2-3b" "llama-3.1-8b-ins" "llama-3.2-3b-ins")
 w_bit_list=(4)
@@ -35,7 +36,7 @@ do
         for group_size in "${group_size_list[@]}"
         do
             awq_cache_path=${HOME_DIR}/awq_cache/${model_name}-w${w_bit}-g${group_size}.pt
-            fake_quant_save_path="/share/abdelfattah/temp_yc2367/awq_quant_model/${model_name}/w${w_bit}-g${group_size}"
+            fake_quant_save_path="${AWQ_DIR}/${model_name}/w${w_bit}-g${group_size}"
 
             echo 
             echo 
