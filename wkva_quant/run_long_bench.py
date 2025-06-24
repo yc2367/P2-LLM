@@ -108,20 +108,27 @@ if __name__ == '__main__':
     logger.info(f"* Model: {model_name_or_path}")
     logger.info(f"#################### Start evaluating ppl with the following configurations: ####################")
     logger.info(f"* Bench compression!!!")
-    logger.info(f"* Attn-Score bits during Prefill: {args.p_bits_pf}")
-    logger.info(f"* Attn-Score bits during Decode: {args.p_bits_dc}")
+    logger.info(f"* Weights bits: {args.w_bits}")
+    logger.info(f"* Weights group size: {args.w_group_size}")
+    logger.info(f"* Apply weight disaggregation?: {args.apply_w_disag}")
+    logger.info(f"* Activation bits: {args.a_bits}")
+    logger.info(f"* Activation group size: {args.a_group_size}")
+    logger.info(f"* Attn-Score bits: {args.p_bits}")
     logger.info(f"* KV-cache quantization method: {args.kv_quant_method}")
+    logger.info(f"* Quantize KV post Attn?: {args.kv_quant_post_attn}")
     logger.info(f"* Key bits: {args.k_bits}")
     logger.info(f"* Value bits: {args.v_bits}")
     logger.info(f"* Key group size: {args.k_group_size}")
     logger.info(f"* Value group size: {args.v_group_size}")
-    logger.info(f"* Quantize KV post Attn?: {args.kv_quant_post_attn}")
     logger.info(f"* KV residual length: {args.kv_residual_len}")
     logger.info(f"* Apply key bias?: {args.apply_k_bias}")
     logger.info(f"* Apply key scale?: {args.apply_k_scale}")
 
     logger.info("#################### Creating output directory ... ####################")
-    output_config_dir = f"{args.kv_quant_method}-kbits_{args.k_bits}-vbits_{args.v_bits}-kgs_{args.k_group_size}-vgs_{args.v_group_size}-res_{args.kv_residual_len}-pbitspf_{args.p_bits_pf}-pbitsdc_{args.p_bits_dc}-bias_{args.apply_k_bias}-scale_{args.apply_k_scale}"
+    if args.use_fp16:
+        output_config_dir = "Baseline_FP16"
+    else:
+        output_config_dir = f"w{args.w_bits}-wgs_{args.w_group_size}-wdis_{args.apply_w_disag}-a{args.a_bits}-ags_{args.a_group_size}-p{args.p_bits}-{args.kv_quant_method}-k{args.k_bits}-v{args.v_bits}-kgs_{args.k_group_size}-vgs_{args.v_group_size}-res_{args.kv_residual_len}-scale_{args.apply_k_scale}"
     output_dir = os.path.join(args.output_dir, model_name, output_config_dir)
     os.makedirs(output_dir, exist_ok=True)
 
