@@ -15,7 +15,7 @@ v_bits_list=(4)
 k_group_size_list=(128)
 v_group_size_list=(128)
 
-p_bits=(8)
+p_bits_list=(8 16)
 
 w_bits_list=(4)
 w_group_size_list=(128)
