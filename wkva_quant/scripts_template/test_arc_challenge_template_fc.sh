@@ -13,10 +13,10 @@ batch_size=16
 
 k_bits_list=(4)
 v_bits_list=(4)
-k_group_size_list=(64)
+k_group_size_list=(128)
 v_group_size_list=(128)
 kv_residual_len_list=(1 4)
-p_bits_list=(8)
+p_bits_list=(8 16)
 
 w_bits_list=(4)
 w_group_size_list=(64 32)
@@ -81,7 +81,7 @@ do
                                             --w_bits ${w_bits} --w_group_size ${w_group_size} \
                                             --awq_model_path_lp ${AWQ_DIR}/${model_name}/w${w_bits}-g${w_group_size} \
                                             --a_bits ${a_bits} --a_group_size ${a_group_size} \
-                                            --apply_w_disag --awq_model_path_lp ${AWQ_DIR}/${model_name}/w8-g256 
+                                            --apply_w_disag --awq_model_path_hp ${AWQ_DIR}/${model_name}/w8-g256 
                                             
                                         python ${HOME_DIR}/run_arc_challenge.py --model_name ${model_name} \
                                             --tasks ${task_list} --batch_size ${batch_size} \
@@ -92,7 +92,7 @@ do
                                             --w_bits ${w_bits} --w_group_size ${w_group_size} \
                                             --awq_model_path_lp ${AWQ_DIR}/${model_name}/w${w_bits}-g${w_group_size} \
                                             --a_bits ${a_bits} --a_group_size ${a_group_size} \
-                                            # --apply_w_disag --awq_model_path_lp ${AWQ_DIR}/${model_name}/w8-g256 
+                                            # --apply_w_disag --awq_model_path_hp ${AWQ_DIR}/${model_name}/w8-g256 
 
                                         python ${HOME_DIR}/run_arc_challenge.py --model_name ${model_name} \
                                             --tasks ${task_list} --batch_size ${batch_size} \
@@ -103,7 +103,7 @@ do
                                             --w_bits ${w_bits} --w_group_size ${w_group_size} \
                                             --awq_model_path_lp ${AWQ_DIR}/${model_name}/w${w_bits}-g${w_group_size} \
                                             --a_bits ${a_bits} --a_group_size ${a_group_size} \
-                                            --apply_w_disag --awq_model_path_lp ${AWQ_DIR}/${model_name}/w8-g256 
+                                            --apply_w_disag --awq_model_path_hp ${AWQ_DIR}/${model_name}/w8-g256 
                                         
                                         python ${HOME_DIR}/run_arc_challenge.py --model_name ${model_name} \
                                             --tasks ${task_list} --batch_size ${batch_size} \
@@ -114,7 +114,7 @@ do
                                             --w_bits ${w_bits} --w_group_size ${w_group_size} \
                                             --awq_model_path_lp ${AWQ_DIR}/${model_name}/w${w_bits}-g${w_group_size} \
                                             --a_bits ${a_bits} --a_group_size ${a_group_size} \
-                                            # --apply_w_disag --awq_model_path_lp ${AWQ_DIR}/${model_name}/w8-g256 
+                                            # --apply_w_disag --awq_model_path_hp ${AWQ_DIR}/${model_name}/w8-g256 
                                     done
                                 done
                             done

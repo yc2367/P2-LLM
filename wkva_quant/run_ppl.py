@@ -151,7 +151,7 @@ if __name__ == '__main__':
     if args.use_fp16:
         output_file_name = "Baseline_FP16"
     else:
-        output_file_name = f"w{args.w_bits}-wgs_{args.w_group_size}-a{args.a_bits}-ags_{args.a_group_size}-{args.kv_quant_method}-k{args.k_bits}-v{args.v_bits}-kgs_{args.k_group_size}-vgs_{args.v_group_size}-res_{args.kv_residual_len}-pbitspf_{args.p_bits_pf}-p{args.p_bits}-scale_{args.apply_k_scale}"
+        output_file_name = f"w{args.w_bits}-wgs_{args.w_group_size}-a{args.a_bits}-ags_{args.a_group_size}-{args.kv_quant_method}-k{args.k_bits}-v{args.v_bits}-kgs_{args.k_group_size}-vgs_{args.v_group_size}-res_{args.kv_residual_len}-p{args.p_bits}-scale_{args.apply_k_scale}"
     output_file_path = os.path.join(output_dir, f"{output_file_name}.txt")
     # check if result file exists
     if os.path.isfile(output_file_path):

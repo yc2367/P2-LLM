@@ -24,12 +24,13 @@ def a_quant_per_group(
         num_groups = h_dim // group_size
         assert num_groups * group_size == h_dim, \
             f"The input tensor's last dimension {x_fp.shape[-1]} is not divisible by group_size {group_size}"
-    x_fp_new = x_fp.float().view(batch, seq_len, num_groups, group_size)
+    x_fp_new = x_fp.view(batch, seq_len, num_groups, group_size)
 
     ############### FP8-E4M3 Quantization ###############
     qmax = 448
-    ramx = torch.amax(x_fp_new.abs(), dim=-1, keepdim=True)
+    rmax = torch.amax(x_fp_new.abs(), dim=-1, keepdim=True)
     scale = rmax / qmax
+    scale = scale.clamp_(min=1e-6)
     x_scaled = (x_fp_new / scale).abs()
 
     x_dq_sign = torch.sign(x_fp_new)
@@ -37,7 +38,7 @@ def a_quant_per_group(
     x_dq_man  = torch.round(x_scaled / 2**x_dq_exp * 2**3) / 2**3
 
     x_dq = x_dq_sign * 2**x_dq_exp * x_dq_man * scale
-    x_dq = x_dq.type(x_fp.dtype).view(batch, seq_len, h_dim)
+    x_dq = x_dq.view(batch, seq_len, h_dim)
 
     return x_dq
 

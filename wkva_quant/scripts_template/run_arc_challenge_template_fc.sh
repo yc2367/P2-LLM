@@ -18,4 +18,4 @@ fi
 touch ${output_file}
 echo ${output_file}
 
-CUDA_VISIBLE_DEVICES=0 bash ${SCRIPTS_DIR}/test_arc_challenge_template.sh 
+CUDA_VISIBLE_DEVICES=0,1 bash ${SCRIPTS_DIR}/test_arc_challenge_template.sh 
