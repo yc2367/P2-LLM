@@ -4,9 +4,9 @@
 HOME_DIR="/home/yc2367/llm/P2-LLM/3rdparty/llm-awq"
 AWQ_DIR="/share/abdelfattah/temp_yc2367/awq_quant_model"
 
-model_name_list=("llama-2-7b" "llama-2-13b" "llama-3.1-8b" "llama-3.2-3b" "llama-3.1-8b-ins" "llama-3.2-3b-ins")
-w_bit_list=(4)
-group_size_list=(128)
+model_name_list=("llama-3.1-8b-ins" "llama-3.2-3b-ins")
+w_bit_list=(8)
+group_size_list=(256)
 
 
 for model_name in "${model_name_list[@]}"

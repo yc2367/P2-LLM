@@ -53,7 +53,8 @@ do
             python -m awq.entry --model_path ${model_path} \
                 --w_bit ${w_bit} --q_group_size ${group_size} \
                 --load_awq ${awq_cache_path} --use_double_quant \
-                --dump_fake ${fake_quant_save_path}
+                --dump_fake ${fake_quant_save_path} \
+                --tasks "wikitext"
         done
     done
 done
