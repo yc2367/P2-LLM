@@ -4,7 +4,7 @@ model=("llama-3.2-3b")
 dataset_list="wikitext,c4"
 
 
-HOME_DIR="/home/yc2367/llm/P2-LLM/kv_quant"
+HOME_DIR="/root/workspace/P2-LLM/kv_quant"
 
 k_bits_list=(4 3)
 v_bits_list=(4 3)

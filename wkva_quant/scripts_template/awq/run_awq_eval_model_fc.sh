@@ -1,11 +1,12 @@
 #!/bin/bash
 
 
-HOME_DIR="/home/yc2367/llm/P2-LLM/3rdparty/llm-awq"
+HOME_DIR="/root/workspace/P2-LLM/3rdparty/llm-awq"
+AWQ_DIR="/share/abdelfattah/temp_yc2367/awq_quant_model"
 
 model_name_list=("llama-2-7b" "llama-2-13b" "llama-3.1-8b" "llama-3.2-3b" "llama-3.1-8b-ins" "llama-3.2-3b-ins")
 w_bit_list=(4)
-group_size_list=(128 64 32)
+group_size_list=(128)
 
 
 for model_name in "${model_name_list[@]}"
@@ -35,6 +36,7 @@ do
         for group_size in "${group_size_list[@]}"
         do
             awq_cache_path=${HOME_DIR}/awq_cache/${model_name}-w${w_bit}-g${group_size}.pt
+            fake_quant_save_path="${AWQ_DIR}/${model_name}/w${w_bit}-g${group_size}"
 
             echo 
             echo 
@@ -50,7 +52,7 @@ do
             cd ${HOME_DIR}
             python -m awq.entry --model_path ${model_path} \
                 --w_bit ${w_bit} --q_group_size ${group_size} \
-                --run_awq --dump_awq ${awq_cache_path} \
+                --use_double_quant \
                 --tasks "wikitext"
         done
     done

@@ -1,7 +1,7 @@
 #!/bin/bash
 
 ########## Modify the path according to your HOME directory ##########
-HOME_DIR="/home/yc2367/llm/P2-LLM/wkva_quant"
+HOME_DIR="/root/workspace/P2-LLM/wkva_quant"
 ######################################################################
 
 SCRIPTS_DIR="${HOME_DIR}/scripts_template"

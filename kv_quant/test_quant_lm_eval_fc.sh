@@ -10,7 +10,7 @@ batch_size=8
 
 #limit=256
 
-HOME_DIR="/home/yc2367/llm/P2-LLM/kv_quant"
+HOME_DIR="/root/workspace/P2-LLM/kv_quant"
 
 k_bits_list=(4)
 v_bits_list=(3)

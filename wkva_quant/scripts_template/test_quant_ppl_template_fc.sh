@@ -1,28 +1,25 @@
 #!/bin/bash
 
 ########## Modify the path according to your HOME directory ##########
-HOME_DIR="/home/yc2367/llm/P2-LLM/wkva_quant"
-AWQ_DIR="/share/abdelfattah/temp_yc2367/awq_quant_model"
+HOME_DIR="/root/workspace/P2-LLM/wkva_quant"
+# AWQ_DIR="/share/abdelfattah/temp_yc2367/awq_quant_model"
 ######################################################################
 
-OUTPUT_DIR=${HOME_DIR}/results/gsm8k_cot_llama
+OUTPUT_DIR=${HOME_DIR}/results/ppl
 
-model_list=("llama-3.2-3b-ins")
-task_list="gsm8k_cot_llama"
-# GSM8K-CoT-Llama
-limit=1319 # number of samples in GSM8K dataset
-num_fewshot=8
-batch_size=8
+# model_list=("llama-2-7b" "llama-2-13b" "llama-3.1-8b" "llama-3.2-3b")
+model_list=("llama-2-7b")
+dataset_list="wikitext,c4"
 
 k_bits_list=(4)
 v_bits_list=(4)
 k_group_size_list=(128)
 v_group_size_list=(128)
-kv_residual_len_list=(4 8)
-p_bits_list=(8)
+
+p_bits=(8)
 
 w_bits_list=(4)
-w_group_size_list=(64 32)
+w_group_size_list=(128)
 
 a_bits=(8)
 a_group_size_list=(128 -1)
@@ -49,58 +46,48 @@ do
                                     for a_group_size in "${a_group_size_list[@]}"  
                                     do
                                         ####################  All FP16  ####################
-                                        python ${HOME_DIR}/run_lm_eval.py --model_name ${model_name} \
+                                        python ${HOME_DIR}/run_ppl.py --model_name ${model_name} \
                                             --use_fp16 \
-                                            --tasks ${task_list} --batch_size ${batch_size} --limit ${limit} \
-                                            --num_fewshot ${num_fewshot} --fewshot_as_multiturn --apply_chat_template \
+                                            --datasets ${dataset_list} --seq_len 2048 \
                                             --output_dir ${OUTPUT_DIR}
                                         
                                         ####################  Weight FP16  ####################
-                                        python ${HOME_DIR}/run_lm_eval.py --model_name ${model_name} \
-                                            --tasks ${task_list} --batch_size ${batch_size} --limit ${limit} \
-                                            --num_fewshot ${num_fewshot} --fewshot_as_multiturn --apply_chat_template \
+                                        python ${HOME_DIR}/run_ppl.py --model_name ${model_name} \
+                                            --datasets ${dataset_list} --seq_len 2048 \
                                             --output_dir ${OUTPUT_DIR} \
-                                            --kv_quant_method "KTVT" --kv_residual_len 4 --kv_quant_post_attn \
-                                            --k_bits 4 --v_bits 4 --k_group_size 128 --v_group_size 128 \
-                                            
-                                        python ${HOME_DIR}/run_lm_eval.py --model_name ${model_name} \
-                                            --tasks ${task_list} --batch_size ${batch_size} --limit ${limit} \
-                                            --num_fewshot ${num_fewshot} --fewshot_as_multiturn --apply_chat_template \
-                                            --output_dir ${OUTPUT_DIR} \
-                                            --kv_quant_method "KTVT" --kv_residual_len 4 --kv_quant_post_attn --apply_k_scale \
+                                            --kv_quant_method "KTVT" \
                                             --k_bits 4 --v_bits 4 --k_group_size 128 --v_group_size 128 \
 
+                                        python ${HOME_DIR}/run_ppl.py --model_name ${model_name} \
+                                            --datasets ${dataset_list} --seq_len 2048 \
+                                            --output_dir ${OUTPUT_DIR} \
+                                            --kv_quant_method "KTVT" --apply_k_scale \
+                                            --k_bits 4 --v_bits 4 --k_group_size 128 --v_group_size 128 \
+                                        
                                         ####################  KV-cache FP16  ####################
-                                        python ${HOME_DIR}/run_lm_eval.py --model_name ${model_name} \
-                                            --tasks ${task_list} --batch_size ${batch_size} --limit ${limit} \
-                                            --num_fewshot ${num_fewshot} --fewshot_as_multiturn --apply_chat_template \
+                                        python ${HOME_DIR}/run_ppl.py --model_name ${model_name} \
+                                            --datasets ${dataset_list} --seq_len 2048 \
                                             --output_dir ${OUTPUT_DIR} \
                                             --w_bits ${w_bits} --w_group_size ${w_group_size} \
                                             --awq_model_path_lp ${AWQ_DIR}/${model_name}/w${w_bits}-g${w_group_size}
                                         
                                         ####################  KTVT  ####################
-                                        python ${HOME_DIR}/run_lm_eval.py --model_name ${model_name} \
-                                            --tasks ${task_list} --batch_size ${batch_size} --limit ${limit} \
-                                            --num_fewshot ${num_fewshot} --fewshot_as_multiturn --apply_chat_template \
-                                            --output_dir ${OUTPUT_DIR} \
-                                            --kv_quant_method "KTVT" --kv_residual_len ${kv_residual_len} --kv_quant_post_attn \
+                                        python ${HOME_DIR}/run_ppl.py --model_name ${model_name} \
+                                            --datasets ${dataset_list} --seq_len 2048 --output_dir ${OUTPUT_DIR} \
+                                            --kv_quant_method "KTVT" \
                                             --k_bits ${k_bits} --v_bits ${v_bits} --k_group_size ${k_group_size} --v_group_size ${v_group_size} \
                                             --p_bits ${p_bits} \
                                             --w_bits ${w_bits} --w_group_size ${w_group_size} \
                                             --awq_model_path_lp ${AWQ_DIR}/${model_name}/w${w_bits}-g${w_group_size} \
-                                            --apply_w_disag --awq_model_path_lp ${AWQ_DIR}/${model_name}/w8-g256 \
                                             --a_bits ${a_bits} --a_group_size ${a_group_size}
                                         
-                                        python ${HOME_DIR}/run_lm_eval.py --model_name ${model_name} \
-                                            --tasks ${task_list} --batch_size ${batch_size} --limit ${limit} \
-                                            --num_fewshot ${num_fewshot} --fewshot_as_multiturn --apply_chat_template \
-                                            --output_dir ${OUTPUT_DIR} \
-                                            --kv_quant_method "KTVT" --kv_residual_len ${kv_residual_len} --kv_quant_post_attn --apply_k_scale \
+                                        python ${HOME_DIR}/run_ppl.py --model_name ${model_name} \
+                                            --datasets ${dataset_list} --seq_len 2048 --output_dir ${OUTPUT_DIR} \
+                                            --kv_quant_method "KTVT" --apply_k_scale \
                                             --k_bits ${k_bits} --v_bits ${v_bits} --k_group_size ${k_group_size} --v_group_size ${v_group_size} \
                                             --p_bits ${p_bits} \
                                             --w_bits ${w_bits} --w_group_size ${w_group_size} \
                                             --awq_model_path_lp ${AWQ_DIR}/${model_name}/w${w_bits}-g${w_group_size} \
-                                            --apply_w_disag --awq_model_path_lp ${AWQ_DIR}/${model_name}/w8-g256 \
                                             --a_bits ${a_bits} --a_group_size ${a_group_size}
                                     done
                                 done
