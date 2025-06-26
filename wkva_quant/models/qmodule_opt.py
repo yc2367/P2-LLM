@@ -4,7 +4,7 @@ from torch import nn
 from torch.nn import BCEWithLogitsLoss, CrossEntropyLoss, MSELoss
 
 from transformers.models.opt.configuration_opt import *
-from transformers.models.llama.modeling_opt import *
+from transformers.models.opt.modeling_opt import *
 from transformers.modeling_attn_mask_utils import _prepare_4d_causal_attention_mask
 
 from quantize.quant_config import QuantConfig
@@ -173,10 +173,10 @@ class QuantOPTAttention(nn.Module):
                 value_states_quant = None
                 value_states_float = value_states
             else:
-                key_states_quant = key_states[;, :, :-kv_states_float_len, :].contiguous()
-                key_states_float = key_states[;, :, -kv_states_float_len:, :].contiguous()
-                value_states_quant = value_states[;, :, :-kv_states_float_len, :].contiguous()
-                value_states_float = value_states[;, :, -kv_states_float_len:, :].contiguous()
+                key_states_quant = key_states[:, :, :-kv_states_float_len, :].contiguous()
+                key_states_float = key_states[:, :, -kv_states_float_len:, :].contiguous()
+                value_states_quant = value_states[:, :, :-kv_states_float_len, :].contiguous()
+                value_states_float = value_states[:, :, -kv_states_float_len:, :].contiguous()
         else:
             key_states_quant = key_states
             key_states_float = None
@@ -197,7 +197,7 @@ class QuantOPTAttention(nn.Module):
             value_states_quant_int = None
             value_states_quant_scale = None
 
-        src_len = key_states.size(1)
+        src_len = key_states.size(-2)
 
         ############################################ Q x K.T ############################################
         if key_states_quant is None:
@@ -371,8 +371,6 @@ class OPTDecoderLayer(nn.Module):
             hidden_states = self.self_attn_layer_norm(hidden_states)
 
         # Fully Connected
-        hidden_states_shape = hidden_states.shape
-        hidden_states = hidden_states.reshape(-1, hidden_states.size(-1))
         residual = hidden_states
 
         # 125m, 1.7B, ..., 175B applies layer norm BEFORE attention
@@ -391,7 +389,7 @@ class OPTDecoderLayer(nn.Module):
         hidden_states = self.fc2(hidden_states)
         hidden_states = nn.functional.dropout(hidden_states, p=self.dropout, training=self.training)
 
-        hidden_states = (residual + hidden_states).view(hidden_states_shape)
+        hidden_states = (residual + hidden_states)
 
         # 350m applies layer norm AFTER attention
         if not self.do_layer_norm_before:
@@ -727,7 +725,7 @@ class QuantOPTModel(OPTPreTrainedModel):
         )
 
 
-class OPTForCausalLM(OPTPreTrainedModel):
+class QuantOPTForCausalLM(OPTPreTrainedModel):
     _tied_weights_keys = ["lm_head.weight"]
 
     def __init__(self, config, quant_config: QuantConfig):
@@ -832,9 +830,9 @@ class OPTForCausalLM(OPTPreTrainedModel):
         Example:
 
         ```python
-        >>> from transformers import AutoTokenizer, OPTForCausalLM
+        >>> from transformers import AutoTokenizer, QuantOPTForCausalLM
 
-        >>> model = OPTForCausalLM.from_pretrained("facebook/opt-350m")
+        >>> model = QuantOPTForCausalLM.from_pretrained("facebook/opt-350m")
         >>> tokenizer = AutoTokenizer.from_pretrained("facebook/opt-350m")
 
         >>> prompt = "Hey, are you conscious? Can you talk to me?"

@@ -3,14 +3,21 @@
 
 HOME_DIR="/home/yc2367/llm/P2-LLM/3rdparty/llm-awq"
 
-model_name_list=("llama-2-7b" "llama-2-13b" "llama-3.1-8b" "llama-3.2-3b" "llama-3.1-8b-ins" "llama-3.2-3b-ins")
+model_name_list=("opt-6.7b" "opt-13b" "llama-2-7b" "llama-2-13b" "llama-3.1-8b" "llama-3.2-3b" "llama-3.1-8b-ins" "llama-3.2-3b-ins")
+
 w_bit_list=(4)
 group_size_list=(128 64 32)
 
 
 for model_name in "${model_name_list[@]}"
 do
-    if [[ ${model_name} == "llama-2-7b" ]]
+    if [[ ${model_name} == "opt-6.7b" ]]
+    then
+        model_path="facebook/opt-6.7b"
+    elif [[ ${model_name} == "opt-13b" ]]
+    then
+        model_path="facebook/opt-13b"
+    elif [[ ${model_name} == "llama-2-7b" ]]
     then
         model_path="meta-llama/Llama-2-7b-hf"
     elif [[ ${model_name} == "llama-2-13b" ]]
