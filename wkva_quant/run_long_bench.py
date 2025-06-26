@@ -127,8 +127,14 @@ if __name__ == '__main__':
     logger.info("#################### Creating output directory ... ####################")
     if args.use_fp16:
         output_config_dir = "Baseline_FP16"
+    elif (args.a_bits == 16) and (args.k_bits == 16) and (args.v_bits == 16) and (args.p_bits == 16):
+        output_config_dir = f"Baseline-w{args.w_bits}-wgs_{args.w_group_size}-a16-k16-v16-p16"
+    elif (args.a_bits == 16) and (args.w_bits == 16) and (args.p_bits == 16):
+        output_config_dir = f"Baseline-w16-a16-k{args.k_bits}-v{args.v_bits}-{args.kv_quant_method}-kgs_{args.k_group_size}-vgs_{args.v_group_size}-res_{args.kv_residual_len}-p16-scale_{args.apply_k_scale}"
+    elif (args.a_bits == 16) and (args.p_bits == 16):
+        output_config_dir = f"Baseline-w{args.w_bits}-wgs_{args.w_group_size}-a{args.a_bits}-{args.kv_quant_method}-k{args.k_bits}-v{args.v_bits}-kgs_{args.k_group_size}-vgs_{args.v_group_size}-res_{args.kv_residual_len}-p16-scale_{args.apply_k_scale}"
     else:
-        output_config_dir = f"w{args.w_bits}-wgs_{args.w_group_size}-wdis_{args.apply_w_disag}-a{args.a_bits}-ags_{args.a_group_size}-p{args.p_bits}-{args.kv_quant_method}-k{args.k_bits}-v{args.v_bits}-kgs_{args.k_group_size}-vgs_{args.v_group_size}-res_{args.kv_residual_len}-scale_{args.apply_k_scale}"
+        output_config_dir = f"w{args.w_bits}-wgs_{args.w_group_size}-wdis_{args.apply_w_disag}-a{args.a_bits}-ags_{args.a_group_size}-{args.kv_quant_method}-k{args.k_bits}-v{args.v_bits}-kgs_{args.k_group_size}-vgs_{args.v_group_size}-res_{args.kv_residual_len}-p{args.p_bits}-scale_{args.apply_k_scale}"
     output_dir = os.path.join(args.output_dir, model_name, output_config_dir)
     os.makedirs(output_dir, exist_ok=True)
 
