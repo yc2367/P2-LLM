@@ -155,7 +155,7 @@ if __name__ == '__main__':
     elif (args.a_bits == 16) and (args.w_bits == 16) and (args.p_bits == 16):
         output_file_name = f"Baseline-w16-a16-k{args.k_bits}-v{args.v_bits}-{args.kv_quant_method}-kgs_{args.k_group_size}-vgs_{args.v_group_size}-res_{args.kv_residual_len}-p16-scale_{args.apply_k_scale}"
     elif (args.a_bits == 16) and (args.p_bits == 16):
-        output_file_name = f"Baseline-w{args.w_bits}-wgs_{args.w_group_size}-a{args.a_bits}-{args.kv_quant_method}-k{args.k_bits}-v{args.v_bits}-kgs_{args.k_group_size}-vgs_{args.v_group_size}-res_{args.kv_residual_len}-p16-scale_{args.apply_k_scale}"
+        output_file_name = f"Baseline-w{args.w_bits}-wgs_{args.w_group_size}-a16-{args.kv_quant_method}-k{args.k_bits}-v{args.v_bits}-kgs_{args.k_group_size}-vgs_{args.v_group_size}-res_{args.kv_residual_len}-p16-scale_{args.apply_k_scale}"
     else:
         output_file_name = f"w{args.w_bits}-wgs_{args.w_group_size}-a{args.a_bits}-ags_{args.a_group_size}-{args.kv_quant_method}-k{args.k_bits}-v{args.v_bits}-kgs_{args.k_group_size}-vgs_{args.v_group_size}-res_{args.kv_residual_len}-p{args.p_bits}-scale_{args.apply_k_scale}"
     output_file_path = os.path.join(output_dir, f"{output_file_name}.txt")
