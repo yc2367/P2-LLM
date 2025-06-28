@@ -2,8 +2,8 @@ import torch
 import torch.nn.functional as F
 from torch import nn
 
-from transformers.models.llama.configuration_llama import *
-from transformers.models.llama.modeling_llama import *
+from transformers.models.mistral.configuration_mistral import *
+from transformers.models.mistral.modeling_mistral import *
 from transformers.modeling_attn_mask_utils import _prepare_4d_causal_attention_mask
 
 from quantize.quant_config import QuantConfig
@@ -13,7 +13,7 @@ from typing import Optional, Tuple
 import logging
 logger = logging.getLogger(__name__)
 
-_CONFIG_FOR_DOC = "LlamaConfig"
+_CONFIG_FOR_DOC = "MistralConfig"
 
 
 def apply_rotary_pos_emb_post_quant(q, k, cos_q, sin_q, cos_k, sin_k, position_ids=None, unsqueeze_dim=1):
@@ -45,78 +45,25 @@ def apply_rotary_pos_emb_post_quant(q, k, cos_q, sin_q, cos_k, sin_k, position_i
     return q_embed, k_embed
 
 
-class LlamaRotaryEmbeddingPostQuant(nn.Module):
-    def __init__(
-        self,
-        dim=None,
-        max_position_embeddings=2048,
-        base=10000,
-        device=None,
-        scaling_factor=1.0,
-        rope_type="default",
-        config: Optional[LlamaConfig] = None,
-    ):
+class MistralRotaryEmbeddingPostQuant(nn.Module):
+    def __init__(self, dim, max_position_embeddings=2048, base=10000, device=None):
         super().__init__()
-        # TODO (joao): remove the `if` below, only used for BC
-        self.rope_kwargs = {}
-        if config is None:
-            logger.warning_once(
-                "`LlamaRotaryEmbedding` can now be fully parameterized by passing the model config through the "
-                "`config` argument. All other arguments will be removed in v4.45"
-            )
-            self.rope_kwargs = {
-                "rope_type": rope_type,
-                "factor": scaling_factor,
-                "dim": dim,
-                "base": base,
-                "max_position_embeddings": max_position_embeddings,
-            }
-            self.rope_type = rope_type
-            self.max_seq_len_cached = max_position_embeddings
-            self.original_max_seq_len = max_position_embeddings
-        else:
-            # BC: "rope_type" was originally "type"
-            if config.rope_scaling is not None:
-                self.rope_type = config.rope_scaling.get("rope_type", config.rope_scaling.get("type"))
-            else:
-                self.rope_type = "default"
-            self.max_seq_len_cached = config.max_position_embeddings
-            self.original_max_seq_len = config.max_position_embeddings
 
-        self.config = config
-        self.rope_init_fn = ROPE_INIT_FUNCTIONS[self.rope_type]
-
-        inv_freq, self.attention_scaling = self.rope_init_fn(self.config, device, **self.rope_kwargs)
+        self.dim = dim
+        self.max_position_embeddings = max_position_embeddings
+        self.base = base
+        inv_freq = 1.0 / (self.base ** (torch.arange(0, self.dim, 2, dtype=torch.int64).float().to(device) / self.dim))
         self.register_buffer("inv_freq", inv_freq, persistent=False)
-        self.original_inv_freq = self.inv_freq
-
-    def _dynamic_frequency_update(self, position_ids, device):
-        """
-        dynamic RoPE layers should recompute `inv_freq` in the following situations:
-        1 - growing beyond the cached sequence length (allow scaling)
-        2 - the current sequence length is in the original scale (avoid losing precision with small sequences)
-        """
-        seq_len = torch.max(position_ids) + 1
-        if seq_len > self.max_seq_len_cached:  # growth
-            inv_freq, self.attention_scaling = self.rope_init_fn(
-                self.config, device, seq_len=seq_len, **self.rope_kwargs
-            )
-            self.register_buffer("inv_freq", inv_freq, persistent=False)  # TODO joao: may break with compilation
-            self.max_seq_len_cached = seq_len
-
-        if seq_len < self.original_max_seq_len and self.max_seq_len_cached > self.original_max_seq_len:  # reset
-            self.register_buffer("inv_freq", self.original_inv_freq, persistent=False)
-            self.max_seq_len_cached = self.original_max_seq_len
 
     @torch.no_grad()
+    # copied from transformers.models.llama.modeling_llama.MistralRotaryEmbedding.forward
+    # TODO(joao): add me back asap :)
     def forward(self, x, position_ids, position_ids_cache):
-        if "dynamic" in self.rope_type:
-            self._dynamic_frequency_update(position_ids_cache, device=x.device)
-        
-        # Core RoPE block
+        # x: [bs, num_attention_heads, seq_len, head_size]
         inv_freq_expanded = self.inv_freq[None, :, None].float().expand(position_ids.shape[0], -1, 1)
         position_ids_expanded = position_ids[:, None, :].float()
-        # Force float32 (see https://github.com/huggingface/transformers/pull/29285)
+        # Force float32 since bfloat16 loses precision on long contexts
+        # See https://github.com/huggingface/transformers/pull/29285
         device_type = x.device.type
         device_type = device_type if isinstance(device_type, str) and device_type != "mps" else "cpu"
         with torch.autocast(device_type=device_type, enabled=False):
@@ -125,10 +72,11 @@ class LlamaRotaryEmbeddingPostQuant(nn.Module):
             cos_q = emb.cos()
             sin_q = emb.sin()
         
-        # Core RoPE block
+        # x: [bs, num_attention_heads, seq_len, head_size]
         inv_freq_expanded_cache = self.inv_freq[None, :, None].float().expand(position_ids_cache.shape[0], -1, 1)
         position_ids_expanded_cache = position_ids_cache[:, None, :].float()
-        # Force float32 (see https://github.com/huggingface/transformers/pull/29285)
+        # Force float32 since bfloat16 loses precision on long contexts
+        # See https://github.com/huggingface/transformers/pull/29285
         device_type = x.device.type
         device_type = device_type if isinstance(device_type, str) and device_type != "mps" else "cpu"
         with torch.autocast(device_type=device_type, enabled=False):
@@ -137,25 +85,19 @@ class LlamaRotaryEmbeddingPostQuant(nn.Module):
             cos_k = emb.cos()
             sin_k = emb.sin()
 
-        # Advanced RoPE types (e.g. yarn) apply a post-processing scaling factor, equivalent to scaling attention
-        cos_q = cos_q * self.attention_scaling
-        sin_q = sin_q * self.attention_scaling
-        cos_k = cos_k * self.attention_scaling
-        sin_k = sin_k * self.attention_scaling
-
         return cos_q.to(dtype=x.dtype), sin_q.to(dtype=x.dtype), cos_k.to(dtype=x.dtype), sin_k.to(dtype=x.dtype)
 
 
-class QuantLlamaAttention(nn.Module):
+class QuantMistralAttention(nn.Module):
     """Multi-headed attention from 'Attention Is All You Need' paper"""
 
-    def __init__(self, config: LlamaConfig, quant_config: QuantConfig):
+    def __init__(self, config: MistralConfig, quant_config: QuantConfig):
         super().__init__()
         self.config = config
         self.attention_dropout = config.attention_dropout
         self.hidden_size = config.hidden_size
         self.num_heads = config.num_attention_heads
-        self.head_dim = self.hidden_size // self.num_heads
+        self.head_dim = config.head_dim
         self.num_key_value_heads = config.num_key_value_heads
         self.num_key_value_groups = self.num_heads // self.num_key_value_heads
         self.max_position_embeddings = config.max_position_embeddings
@@ -175,15 +117,15 @@ class QuantLlamaAttention(nn.Module):
                 f" and `num_heads`: {self.num_heads})."
             )
 
-        self.q_proj = nn.Linear(self.hidden_size, self.num_heads * self.head_dim, bias=config.attention_bias)
-        self.k_proj = nn.Linear(self.hidden_size, self.num_key_value_heads * self.head_dim, bias=config.attention_bias)
-        self.v_proj = nn.Linear(self.hidden_size, self.num_key_value_heads * self.head_dim, bias=config.attention_bias)
-        self.o_proj = nn.Linear(self.num_heads * self.head_dim, self.hidden_size, bias=config.attention_bias)
-        self.rotary_emb = LlamaRotaryEmbedding(config=self.config)
-        self.rotary_emb_post_quant = LlamaRotaryEmbeddingPostQuant(config=self.config)
-
-    def _shape(self, tensor: torch.Tensor, seq_len: int, bsz: int):
-        return tensor.view(bsz, seq_len, self.num_heads, self.head_dim).transpose(1, 2).contiguous()
+        self.q_proj = nn.Linear(self.hidden_size, self.num_heads * self.head_dim, bias=False)
+        self.k_proj = nn.Linear(self.hidden_size, self.num_key_value_heads * self.head_dim, bias=False)
+        self.v_proj = nn.Linear(self.hidden_size, self.num_key_value_heads * self.head_dim, bias=False)
+        self.o_proj = nn.Linear(self.num_heads * self.head_dim, self.hidden_size, bias=False)
+        self.rotary_emb_post_quant = MistralRotaryEmbeddingPostQuant(
+            self.head_dim,
+            max_position_embeddings=self.max_position_embeddings,
+            base=self.rope_theta,
+        )
 
     def forward(
         self,
@@ -195,35 +137,15 @@ class QuantLlamaAttention(nn.Module):
         use_cache: bool = False,
         **kwargs,
     ) -> Tuple[torch.Tensor, Optional[torch.Tensor], Optional[Tuple[torch.Tensor]]]:
-        if "padding_mask" in kwargs:
-            warnings.warn(
-                "Passing `padding_mask` is deprecated and will be removed in v4.37. Please make sure use `attention_mask` instead.`"
-            )
         bsz, q_len, _ = hidden_states.size()
 
         #NOTE (Yuzong): activation quantization
         hidden_states_quant = a_quant_function(hidden_states, self.quant_config)
 
-        if self.config.pretraining_tp > 1:
-            key_value_slicing = (self.num_key_value_heads * self.head_dim) // self.config.pretraining_tp
-            query_slices = self.q_proj.weight.split(
-                (self.num_heads * self.head_dim) // self.config.pretraining_tp, dim=0
-            )
-            key_slices = self.k_proj.weight.split(key_value_slicing, dim=0)
-            value_slices = self.v_proj.weight.split(key_value_slicing, dim=0)
-
-            query_states = [F.linear(hidden_states_quant, query_slices[i]) for i in range(self.config.pretraining_tp)]
-            query_states = torch.cat(query_states, dim=-1)
-
-            key_states = [F.linear(hidden_states_quant, key_slices[i]) for i in range(self.config.pretraining_tp)]
-            key_states = torch.cat(key_states, dim=-1)
-
-            value_states = [F.linear(hidden_states_quant, value_slices[i]) for i in range(self.config.pretraining_tp)]
-            value_states = torch.cat(value_states, dim=-1)
-        else:
-            query_states = self.q_proj(hidden_states_quant)
-            key_states = self.k_proj(hidden_states_quant)
-            value_states = self.v_proj(hidden_states_quant)
+        #########################  QKV Projection  #########################
+        query_states = self.q_proj(hidden_states_quant)
+        key_states = self.k_proj(hidden_states_quant)
+        value_states = self.v_proj(hidden_states_quant)
         
         query_states = query_states.view(bsz, q_len, self.num_heads, self.head_dim).transpose(1, 2)
         key_states = key_states.view(bsz, q_len, self.num_key_value_heads, self.head_dim).transpose(1, 2)
@@ -310,10 +232,9 @@ class QuantLlamaAttention(nn.Module):
                         raise ValueError(
                             f"Attention mask should be of size {(bsz, 1, q_len, kv_seq_len)}, but is {attention_mask.size()}"
                         )
-                    attn_weights = attn_weights + attention_mask
-                    attn_weights = torch.max(
-                        attn_weights, torch.tensor(torch.finfo(attn_weights.dtype).min)
-                    )    
+                    causal_mask = attention_mask[:, :, :, : key_states.shape[-2]]
+                    attn_weights = attn_weights + causal_mask
+
                 # upcast attention to fp32
                 attn_weights = nn.functional.softmax(
                     attn_weights, dim=-1, dtype=torch.float32
@@ -412,10 +333,9 @@ class QuantLlamaAttention(nn.Module):
                         raise ValueError(
                             f"Attention mask should be of size {(bsz, 1, q_len, kv_seq_len)}, but is {attention_mask.size()}"
                         )
-                    attn_weights = attn_weights + attention_mask
-                    attn_weights = torch.max(
-                        attn_weights, torch.tensor(torch.finfo(attn_weights.dtype).min)
-                    )
+                    causal_mask = attention_mask[:, :, :, : key_states.shape[-2]]
+                    attn_weights = attn_weights + causal_mask
+
                 # upcast attention to fp32
                 attn_weights = nn.functional.softmax(
                     attn_weights, dim=-1, dtype=torch.float32
@@ -509,9 +429,9 @@ class QuantLlamaAttention(nn.Module):
                     ############################################ Q x K.T ############################################
                     for i_h in range(0, self.num_heads // 4): #NOTE the number of heads processed in every iteration is hard-coded "4"
                         attn_weights = torch.matmul(query_states[:, i_h*4 : (i_h+1)*4, :, :], key_states[:, i_h*4 : (i_h+1)*4, :, :].transpose(2, 3)) / math.sqrt(self.head_dim)
-                        if attn_weights.size() != (bsz, 4, q_len, kv_seq_len):
+                        if attn_weights.size() != (bsz, self.num_heads, q_len, kv_seq_len):
                             raise ValueError(
-                                f"Attention weights should be of size {(bsz, 4, q_len, kv_seq_len)}, but is"
+                                f"Attention weights should be of size {(bsz, self.num_heads, q_len, kv_seq_len)}, but is"
                                 f" {attn_weights.size()}"
                             )
                         if attention_mask is not None:
@@ -519,10 +439,9 @@ class QuantLlamaAttention(nn.Module):
                                 raise ValueError(
                                     f"Attention mask should be of size {(bsz, 1, q_len, kv_seq_len)}, but is {attention_mask.size()}"
                                 )
-                            attn_weights = attn_weights + attention_mask
-                            attn_weights = torch.max(
-                                attn_weights, torch.tensor(torch.finfo(attn_weights.dtype).min)
-                            )    
+                            causal_mask = attention_mask[:, :, :, : key_states.shape[-2]]
+                            attn_weights = attn_weights + causal_mask
+
                         # upcast attention to fp32
                         attn_weights = nn.functional.softmax(
                             attn_weights, dim=-1, dtype=torch.float32
@@ -547,10 +466,9 @@ class QuantLlamaAttention(nn.Module):
                             raise ValueError(
                                 f"Attention mask should be of size {(bsz, 1, q_len, kv_seq_len)}, but is {attention_mask.size()}"
                             )
-                        attn_weights = attn_weights + attention_mask
-                        attn_weights = torch.max(
-                            attn_weights, torch.tensor(torch.finfo(attn_weights.dtype).min)
-                        )    
+                        causal_mask = attention_mask[:, :, :, : key_states.shape[-2]]
+                        attn_weights = attn_weights + causal_mask
+
                     # upcast attention to fp32
                     attn_weights = nn.functional.softmax(
                         attn_weights, dim=-1, dtype=torch.float32
@@ -621,10 +539,9 @@ class QuantLlamaAttention(nn.Module):
                         raise ValueError(
                             f"Attention mask should be of size {(bsz, 1, q_len, kv_seq_len)}, but is {attention_mask.size()}"
                         )
-                    attn_weights = attn_weights + attention_mask
-                    attn_weights = torch.max(
-                        attn_weights, torch.tensor(torch.finfo(attn_weights.dtype).min)
-                    )
+                    causal_mask = attention_mask[:, :, :, : key_states.shape[-2]]
+                    attn_weights = attn_weights + causal_mask
+
                 # upcast attention to fp32
                 attn_weights = nn.functional.softmax(
                     attn_weights, dim=-1, dtype=torch.float32
@@ -688,27 +605,21 @@ class QuantLlamaAttention(nn.Module):
 
         #NOTE (Yuzong): activation quantization
         attn_output_quant = a_quant_function(attn_output, self.quant_config)
-
-        if self.config.pretraining_tp > 1:
-            attn_output_quant = attn_output_quant.split(self.hidden_size // self.config.pretraining_tp, dim=2)
-            o_proj_slices = self.o_proj.weight.split(self.hidden_size // self.config.pretraining_tp, dim=1)
-            attn_output = sum([F.linear(attn_output_quant[i], o_proj_slices[i]) for i in range(self.config.pretraining_tp)])
-        else:
-            attn_output = self.o_proj(attn_output_quant)
+        attn_output = self.o_proj(attn_output_quant)
 
         attn_weights = None
         return attn_output, attn_weights, past_key_value
 
 
-class QuantLlamaMLP(nn.Module):
+class QuantMistralMLP(nn.Module):
     def __init__(self, config, quant_config):
         super().__init__()
         self.config = config
         self.hidden_size = config.hidden_size
         self.intermediate_size = config.intermediate_size
-        self.gate_proj = nn.Linear(self.hidden_size, self.intermediate_size, bias=config.mlp_bias)
-        self.up_proj = nn.Linear(self.hidden_size, self.intermediate_size, bias=config.mlp_bias)
-        self.down_proj = nn.Linear(self.intermediate_size, self.hidden_size, bias=config.mlp_bias)
+        self.gate_proj = nn.Linear(self.hidden_size, self.intermediate_size, bias=False)
+        self.up_proj = nn.Linear(self.hidden_size, self.intermediate_size, bias=False)
+        self.down_proj = nn.Linear(self.intermediate_size, self.hidden_size, bias=False)
         self.act_fn = ACT2FN[config.hidden_act]
 
         #NOTE (Yuzong): quantization config
@@ -718,40 +629,22 @@ class QuantLlamaMLP(nn.Module):
         #NOTE (Yuzong): activation quantization
         hidden_states_quant = a_quant_function(hidden_states, self.quant_config)
 
-        if self.config.pretraining_tp > 1:
-            slice = self.intermediate_size // self.config.pretraining_tp
-            gate_proj_slices = self.gate_proj.weight.split(slice, dim=0)
-            up_proj_slices = self.up_proj.weight.split(slice, dim=0)
-            down_proj_slices = self.down_proj.weight.split(slice, dim=1)
-
-            gate_proj = torch.cat(
-                [F.linear(hidden_states_quant, gate_proj_slices[i]) for i in range(self.config.pretraining_tp)], dim=-1
-            )
-            up_proj = torch.cat([F.linear(hidden_states_quant, up_proj_slices[i]) for i in range(self.config.pretraining_tp)], dim=-1)
-
-            intermediate_states = (self.act_fn(gate_proj) * up_proj).split(slice, dim=2)
-            #NOTE (Yuzong): activation quantization
-            down_proj = [
-                F.linear(a_quant_function(intermediate_states[i], self.quant_config), down_proj_slices[i]) for i in range(self.config.pretraining_tp)
-            ]
-            down_proj = sum(down_proj)
-        else:
-            intermediate_states = self.act_fn(self.gate_proj(hidden_states_quant)) * self.up_proj(hidden_states_quant)
-            #NOTE (Yuzong): activation quantization
-            intermediate_states_quant = a_quant_function(intermediate_states, self.quant_config)
-            down_proj = self.down_proj(intermediate_states_quant)
+        intermediate_states = self.act_fn(self.gate_proj(hidden_states_quant)) * self.up_proj(hidden_states_quant)
+        #NOTE (Yuzong): activation quantization
+        intermediate_states_quant = a_quant_function(intermediate_states, self.quant_config)
+        down_proj = self.down_proj(intermediate_states_quant)
 
         return down_proj
 
 
-class LlamaDecoderLayer(nn.Module):
-    def __init__(self, config: LlamaConfig, quant_config: QuantConfig):
+class MistralDecoderLayer(nn.Module):
+    def __init__(self, config: MistralConfig, quant_config: QuantConfig):
         super().__init__()
         self.hidden_size = config.hidden_size
-        self.self_attn = QuantLlamaAttention(config=config, quant_config=quant_config)
-        self.mlp = QuantLlamaMLP(config=config, quant_config=quant_config)
-        self.input_layernorm = LlamaRMSNorm(config.hidden_size, eps=config.rms_norm_eps)
-        self.post_attention_layernorm = LlamaRMSNorm(config.hidden_size, eps=config.rms_norm_eps)
+        self.self_attn = QuantMistralAttention(config=config, quant_config=quant_config)
+        self.mlp = QuantMistralMLP(config=config, quant_config=quant_config)
+        self.input_layernorm = MistralRMSNorm(config.hidden_size, eps=config.rms_norm_eps)
+        self.post_attention_layernorm = MistralRMSNorm(config.hidden_size, eps=config.rms_norm_eps)
 
     def forward(
         self,
@@ -813,24 +706,24 @@ class LlamaDecoderLayer(nn.Module):
         return outputs
             
 
-class QuantLlamaModel(LlamaPreTrainedModel):
+class QuantMistralModel(MistralPreTrainedModel):
     """
-    Transformer decoder consisting of *config.num_hidden_layers* layers. Each layer is a [`LlamaDecoderLayer`]
+    Transformer decoder consisting of *config.num_hidden_layers* layers. Each layer is a [`MistralDecoderLayer`]
 
     Args:
-        config: LlamaConfig
+        config: MistralConfig
     """
 
-    def __init__(self, config: LlamaConfig, quant_config: QuantConfig):
+    def __init__(self, config: MistralConfig, quant_config: QuantConfig):
         super().__init__(config)
         self.padding_idx = config.pad_token_id
         self.vocab_size = config.vocab_size
 
         self.embed_tokens = nn.Embedding(config.vocab_size, config.hidden_size, self.padding_idx)
-        self.layers = nn.ModuleList([LlamaDecoderLayer(config, quant_config) for _ in range(config.num_hidden_layers)])
+        self.layers = nn.ModuleList([MistralDecoderLayer(config, quant_config) for _ in range(config.num_hidden_layers)])
 
         self._use_flash_attention_2 = config._attn_implementation == "flash_attention_2"
-        self.norm = LlamaRMSNorm(config.hidden_size, eps=config.rms_norm_eps)
+        self.norm = MistralRMSNorm(config.hidden_size, eps=config.rms_norm_eps)
         self.gradient_checkpointing = False
         # Initialize weights and apply final processing
         self.post_init()
@@ -841,7 +734,7 @@ class QuantLlamaModel(LlamaPreTrainedModel):
     def set_input_embeddings(self, value):
         self.embed_tokens = value
 
-    @add_start_docstrings_to_model_forward(LLAMA_INPUTS_DOCSTRING)
+    @add_start_docstrings_to_model_forward(MISTRAL_INPUTS_DOCSTRING)
     def forward(
         self,
         input_ids: torch.LongTensor = None,
@@ -891,7 +784,11 @@ class QuantLlamaModel(LlamaPreTrainedModel):
         else:
             # 4d mask is passed through the layers
             attention_mask = _prepare_4d_causal_attention_mask(
-                attention_mask, (batch_size, seq_length), inputs_embeds, past_key_values_length
+                attention_mask, 
+                (batch_size, seq_length), 
+                inputs_embeds, 
+                past_key_values_length,
+                sliding_window=self.config.sliding_window
             )
 
         # embed positions
@@ -960,12 +857,12 @@ class QuantLlamaModel(LlamaPreTrainedModel):
         )
 
 
-class QuantLlamaForCausalLM(LlamaPreTrainedModel):
+class QuantMistralForCausalLM(MistralPreTrainedModel):
     _tied_weights_keys = ["lm_head.weight"]
 
-    def __init__(self, config: LlamaConfig, quant_config: QuantConfig):
+    def __init__(self, config: MistralConfig, quant_config: QuantConfig):
         super().__init__(config)
-        self.model = QuantLlamaModel(config, quant_config)
+        self.model = QuantMistralModel(config, quant_config)
         self.vocab_size = config.vocab_size
         self.lm_head = nn.Linear(config.hidden_size, config.vocab_size, bias=False)
 
@@ -1001,7 +898,7 @@ class QuantLlamaForCausalLM(LlamaPreTrainedModel):
     def get_decoder(self):
         return self.model
     
-    @add_start_docstrings_to_model_forward(LLAMA_INPUTS_DOCSTRING)
+    @add_start_docstrings_to_model_forward(MISTRAL_INPUTS_DOCSTRING)
     @replace_return_docstrings(output_type=CausalLMOutputWithPast, config_class=_CONFIG_FOR_DOC)
     def forward(
         self,
@@ -1028,9 +925,9 @@ class QuantLlamaForCausalLM(LlamaPreTrainedModel):
         Example:
 
         ```python
-        >>> from transformers import AutoTokenizer, LlamaForCausalLM
+        >>> from transformers import AutoTokenizer, MistralForCausalLM
 
-        >>> model = LlamaForCausalLM.from_pretrained(PATH_TO_CONVERTED_WEIGHTS)
+        >>> model = MistralForCausalLM.from_pretrained(PATH_TO_CONVERTED_WEIGHTS)
         >>> tokenizer = AutoTokenizer.from_pretrained(PATH_TO_CONVERTED_TOKENIZER)
 
         >>> prompt = "Hey, are you conscious? Can you talk to me?"
@@ -1070,12 +967,8 @@ class QuantLlamaForCausalLM(LlamaPreTrainedModel):
             )
 
             hidden_states = outputs[0]
-            if self.config.pretraining_tp > 1:
-                lm_head_slices = self.lm_head_prefill.weight.split(self.vocab_size // self.config.pretraining_tp, dim=0)
-                logits = [F.linear(hidden_states, lm_head_slices[i]) for i in range(self.config.pretraining_tp)]
-                logits = torch.cat(logits, dim=-1)
-            else:
-                logits = self.lm_head_prefill(hidden_states)
+            
+            logits = self.lm_head_prefill(hidden_states)
             
             #NOTE (Yuzong): If applying model disaggregation, move tensors to the correct device
             if self.apply_w_disag:
@@ -1106,12 +999,8 @@ class QuantLlamaForCausalLM(LlamaPreTrainedModel):
             )
 
             hidden_states = outputs[0]
-            if self.config.pretraining_tp > 1:
-                lm_head_slices = self.lm_head.weight.split(self.vocab_size // self.config.pretraining_tp, dim=0)
-                logits = [F.linear(hidden_states, lm_head_slices[i]) for i in range(self.config.pretraining_tp)]
-                logits = torch.cat(logits, dim=-1)
-            else:
-                logits = self.lm_head(hidden_states)
+            
+            logits = self.lm_head(hidden_states)
         
         logits = logits.float()
 
