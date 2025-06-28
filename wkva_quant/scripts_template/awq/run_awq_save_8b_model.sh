@@ -36,6 +36,9 @@ do
     elif [[ ${model_name} == "llama-3.2-3b-ins" ]]
     then
         model_path="meta-llama/Llama-3.2-3B-Instruct"
+    elif [[ ${model_name} == "mistral-7b" ]]
+    then
+        model_path="mistralai/Mistral-7B-v0.3"
     fi
 
     for w_bit in "${w_bit_list[@]}"
