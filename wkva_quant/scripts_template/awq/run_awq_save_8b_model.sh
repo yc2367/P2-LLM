@@ -4,7 +4,7 @@
 HOME_DIR="/home/yc2367/llm/P2-LLM/3rdparty/llm-awq"
 AWQ_DIR="/share/abdelfattah/temp_yc2367/awq_quant_model"
 
-model_name_list=("opt-6.7b" "opt-13b" "llama-2-7b" "llama-2-13b" "llama-3.1-8b" "llama-3.2-3b" "llama-3.1-8b-ins" "llama-3.2-3b-ins")
+model_name_list=("llama-7b" "llama-13b" "llama-2-7b" "llama-2-13b" "llama-3.1-8b" "llama-3.2-3b" "llama-3.1-8b-ins" "llama-3.2-3b-ins")
 
 w_bit_list=(8)
 group_size_list=(256)
@@ -12,12 +12,12 @@ group_size_list=(256)
 
 for model_name in "${model_name_list[@]}"
 do
-    if [[ ${model_name} == "opt-6.7b" ]]
+    if [[ ${model_name} == "llama-7b" ]]
     then
-        model_path="facebook/opt-6.7b"
-    elif [[ ${model_name} == "opt-13b" ]]
+        model_path="huggyllama/llama-7b"
+    elif [[ ${model_name} == "llama-13b" ]]
     then
-        model_path="facebook/opt-13b"
+        model_path="huggyllama/llama-13b"
     elif [[ ${model_name} == "llama-2-7b" ]]
     then
         model_path="meta-llama/Llama-2-7b-hf"
