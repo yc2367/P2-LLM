@@ -5,6 +5,7 @@ import torch.nn as nn
 from transformers.models.bloom.modeling_bloom import BloomBlock, BloomGelu
 from transformers.models.opt.modeling_opt import OPTDecoderLayer
 from transformers.models.llama.modeling_llama import LlamaDecoderLayer, LlamaRMSNorm
+from transformers.models.mistral.modeling_mistral import MistralDecoderLayer, MistralRMSNorm
 from transformers.activations import GELUActivation
 
 from .qmodule import ScaledActivation
@@ -254,6 +255,49 @@ def auto_scale_block(module, module_kwargs, w_bit, q_config, input_feat):
             )
         )
 
+    elif isinstance(module, MistralDecoderLayer):
+        # attention input
+        scales_list.append(
+            _auto_get_scale(
+                prev_op=module.input_layernorm,
+                layers=[
+                    module.self_attn.q_proj,
+                    module.self_attn.k_proj,
+                    module.self_attn.v_proj,
+                ],
+                inp=input_feat["self_attn.q_proj"],
+                module2inspect=module.self_attn,
+                kwargs=module_kwargs,
+            )
+        )
+        # attn out
+        # Please refer to https://github.com/mit-han-lab/llm-awq/pull/67#issue-1850622696
+        if module.self_attn.v_proj.weight.shape == module.self_attn.o_proj.weight.shape:
+            scales_list.append(
+                _auto_get_scale(
+                    prev_op=module.self_attn.v_proj,
+                    layers=[module.self_attn.o_proj],
+                    inp=input_feat["self_attn.o_proj"],
+                )
+            )
+        # fc1
+        scales_list.append(
+            _auto_get_scale(
+                prev_op=module.post_attention_layernorm,
+                layers=[module.mlp.gate_proj, module.mlp.up_proj],
+                inp=input_feat["mlp.gate_proj"],
+                module2inspect=module.mlp,
+            )
+        )
+        # fc2
+        scales_list.append(
+            _auto_get_scale(
+                prev_op=module.mlp.up_proj,
+                layers=[module.mlp.down_proj],
+                inp=input_feat["mlp.down_proj"],
+            )
+        )
+
     elif isinstance(module, BloomBlock):
         # attention input
         scales_list.append(
@@ -458,7 +502,7 @@ def apply_scale(module, scales_list, input_feat_dict=None):
         if isinstance(prev_op, nn.Linear):
             assert len(layers) == 1
             scale_fc_fc(prev_op, layers[0], scales)
-        elif isinstance(prev_op, (nn.LayerNorm, LlamaRMSNorm)):
+        elif isinstance(prev_op, (nn.LayerNorm, LlamaRMSNorm, MistralRMSNorm)):
             scale_ln_fcs(prev_op, layers, scales)
         elif isinstance(prev_op, (nn.GELU, BloomGelu, GELUActivation)):
             new_module = ScaledActivation(prev_op, scales)

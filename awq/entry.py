@@ -23,6 +23,7 @@ from datasets import load_dataset
 from torch import nn
 import tqdm
 
+
 parser = argparse.ArgumentParser()
 parser.add_argument("--model_path", type=str, help="path of the hf model")
 parser.add_argument("--batch_size", type=int, default=1, help="batch size")
@@ -50,6 +51,7 @@ parser.add_argument(
 parser.add_argument("--w_bit", type=int, default=None)
 parser.add_argument("--q_group_size", type=int, default=-1)
 parser.add_argument("--no_zero_point", action="store_true", help="disable zero_point")
+parser.add_argument("--use_double_quant", action="store_true", help="apply double quantization to quantize scaling factors")
 parser.add_argument("--q_backend", type=str, default="fake", choices=["fake", "real"])
 # save/load real quantized weights
 parser.add_argument("--dump_quant", type=str, default=None, help="save quantized model")
@@ -81,6 +83,7 @@ if args.auto_parallel:
 q_config = {
     "zero_point": not args.no_zero_point,  # by default True
     "q_group_size": args.q_group_size,  # whether to use group quantization
+    "use_double_quant": args.use_double_quant,  # whether to apply double quantization
 }
 print("Quantization config:", q_config)
 
@@ -88,8 +91,10 @@ print("Quantization config:", q_config)
 
 
 def build_model_and_enc(model_path):
+    """
     if not os.path.exists(model_path):  # look into ssd
         raise FileNotFoundError(f"{model_path} not found!")
+    """
     print(f"* Building model {model_path}")
 
     # all hf model
@@ -182,7 +187,7 @@ def build_model_and_enc(model_path):
                 torch.save(awq_results, args.dump_awq)
                 print("AWQ results saved at", args.dump_awq)
 
-            exit(0)
+            # exit(0)
 
         if args.load_awq:
             print("Loading pre-computed AWQ results from", args.load_awq)
@@ -239,12 +244,15 @@ def build_model_and_enc(model_path):
 
 def main():
     if args.output_path is not None and os.path.exists(args.output_path):
-        # print(f"Results {args.output_path} already generated. Exit.")
-        print(f"Results {args.output_path} already generated. Overwrite.")
-        # exit()
+        print(f"Results {args.output_path} already generated. Exit!")
+        exit()
 
     if args.dump_awq and os.path.exists(args.dump_awq):
-        print(f"Found existing AWQ results {args.dump_awq}, exit.")
+        print(f"Found existing AWQ results {args.dump_awq}. Exit.")
+        exit()
+    
+    if args.dump_fake and os.path.exists(args.dump_fake):
+        print(f"Fake-quantized model {args.dump_fake} already generated. Exit!")
         exit()
 
     # a hack here to auto set model group
