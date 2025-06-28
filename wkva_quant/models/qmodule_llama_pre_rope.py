@@ -963,7 +963,7 @@ class QuantLlamaModel(LlamaPreTrainedModel):
 class QuantLlamaForCausalLM(LlamaPreTrainedModel):
     _tied_weights_keys = ["lm_head.weight"]
 
-    def __init__(self, config, quant_config: QuantConfig):
+    def __init__(self, config: LlamaConfig, quant_config: QuantConfig):
         super().__init__(config)
         self.model = QuantLlamaModel(config, quant_config)
         self.vocab_size = config.vocab_size

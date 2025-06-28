@@ -3,7 +3,7 @@ import importlib
 import numpy as np
 import random, torch
 from functools import reduce
-from transformers import AutoTokenizer, AutoModelForCausalLM, AutoConfig, LlamaConfig
+from transformers import AutoTokenizer, AutoModelForCausalLM, AutoConfig, LlamaConfig, MistralConfig
 
 from quantize import QuantConfig
 
@@ -143,6 +143,46 @@ def load_model_and_tokenizer(model_name, quant_config=None, device_map="cuda:0",
                 )
                 if quant_config.apply_w_disag:
                     model_prefill = QuantLlamaForCausalLM.from_pretrained(
+                        quant_config.awq_model_path_hp,
+                        config=config,
+                        torch_dtype=torch.float16,
+                        device_map="cuda:1",
+                        quant_config=quant_config,
+                        local_files_only=True
+                    )
+                    model_prefill.eval()
+                    model.set_model_prefill(model_prefill.model, model_prefill.lm_head)
+    elif 'mistral' in model_path_fp16.lower():
+        config = MistralConfig.from_pretrained(model_path_fp16)
+        if use_fp16:
+            from transformers import MistralForCausalLM
+            model = MistralForCausalLM.from_pretrained(
+                model_path_fp16,
+                config=config,
+                torch_dtype=torch.float16,
+                device_map=device_map
+            )
+        else:
+            from models import QuantMistralForCausalLM
+            if quant_config.w_bits >= 16:
+                model = QuantMistralForCausalLM.from_pretrained(
+                    model_path_fp16,
+                    config=config,
+                    torch_dtype=torch.float16,
+                    device_map=device_map,
+                    quant_config=quant_config
+                )
+            elif quant_config.w_bits in [4, 6]:
+                model = QuantMistralForCausalLM.from_pretrained(
+                    quant_config.awq_model_path_lp,
+                    config=config,
+                    torch_dtype=torch.float16,
+                    device_map=device_map,
+                    quant_config=quant_config,
+                    local_files_only=True
+                )
+                if quant_config.apply_w_disag:
+                    model_prefill = QuantMistralForCausalLM.from_pretrained(
                         quant_config.awq_model_path_hp,
                         config=config,
                         torch_dtype=torch.float16,
