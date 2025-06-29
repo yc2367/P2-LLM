@@ -108,7 +108,11 @@ def eval_ppl(model, tokenizer, args):
     
 
 if __name__ == '__main__':
+    # Ignore all warnings
+    warnings.filterwarnings("ignore")
+    # Set random seed
     set_seed(0)
+
     parser = argparse.ArgumentParser()
     add_common_args(parser)
     add_quant_args(parser)
