@@ -5,7 +5,7 @@ HOME_DIR="/home/yc2367/llm/P2-LLM/wkva_quant"
 AWQ_DIR="/share/abdelfattah/temp_yc2367/awq_quant_model"
 ######################################################################
 
-OUTPUT_DIR=${HOME_DIR}/results/gsm8k_cot_llama
+OUTPUT_DIR=${HOME_DIR}/results/gsm8k_cot
 
 model_list=("llama-3.2-3b-ins")
 task_list="gsm8k_cot_llama"

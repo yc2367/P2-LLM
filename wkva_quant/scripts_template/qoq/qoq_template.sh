@@ -63,22 +63,21 @@ CUDA_VISIBLE_DEVICES=0,1,2,3 python -m deepcompressor.app.llm.ptq examples/llm/c
 #NOTE (Yuzong): the flag "--enable-rotation false" is required for Llama-3.2-3B
 model_name="llama-3.2-3b"
 model_path="meta-llama/Llama-3.2-3B"
-CUDA_VISIBLE_DEVICES=0,1 python -m deepcompressor.app.llm.ptq examples/llm/configs/qoq-g128.yaml \
+CUDA_VISIBLE_DEVICES=0 python -m deepcompressor.app.llm.ptq examples/llm/configs/qoq-g128.yaml \
     --model-name ${model_name} --model-path ${model_path} \
-    --enable-rotation "false" \
-    --smooth-proj-alpha 0.55 --smooth-proj-beta 0.45 \
+    --smooth-proj-alpha 0.35 --smooth-proj-beta 0.65 \
     --smooth-attn-strategy GridSearch --smooth-attn-beta " -2" \
     --save-model "false" \
     #--load-from ""
 
 # QoQ (W4A8KV4 with progressive weight quantization) on Llama-3.2-3B-Instruct
 #NOTE (Yuzong): the flag "--enable-rotation false" is required for Llama-3.2-3B-Instruct
-model_name="llama-3.2-3b"
-model_path="meta-llama/Llama-3.2-3B"
-CUDA_VISIBLE_DEVICES=0,1 python -m deepcompressor.app.llm.ptq examples/llm/configs/qoq-g128.yaml \
+model_name="llama-3.2-3b-ins"
+model_path="meta-llama/Llama-3.2-3B-Instruct"
+CUDA_VISIBLE_DEVICES=0 python -m deepcompressor.app.llm.ptq examples/llm/configs/qoq-g128.yaml \
     --model-name ${model_name} --model-path ${model_path} \
     --enable-rotation "false" \
-    --smooth-proj-alpha 0.35 --smooth-proj-beta 0.65 \
+    --smooth-proj-alpha 0.2 --smooth-proj-beta 0.8 \
     --smooth-attn-strategy GridSearch --smooth-attn-beta " -2" \
     --save-model "false" \
     #--load-from ""
