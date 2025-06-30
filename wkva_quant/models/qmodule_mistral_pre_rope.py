@@ -232,8 +232,10 @@ class QuantMistralAttention(nn.Module):
                         raise ValueError(
                             f"Attention mask should be of size {(bsz, 1, q_len, kv_seq_len)}, but is {attention_mask.size()}"
                         )
-                    causal_mask = attention_mask[:, :, :, : key_states.shape[-2]]
-                    attn_weights = attn_weights + causal_mask
+                    attn_weights = attn_weights + attention_mask
+                    attn_weights = torch.max(
+                        attn_weights, torch.tensor(torch.finfo(attn_weights.dtype).min)
+                    )
 
                 # upcast attention to fp32
                 attn_weights = nn.functional.softmax(
@@ -333,8 +335,10 @@ class QuantMistralAttention(nn.Module):
                         raise ValueError(
                             f"Attention mask should be of size {(bsz, 1, q_len, kv_seq_len)}, but is {attention_mask.size()}"
                         )
-                    causal_mask = attention_mask[:, :, :, : key_states.shape[-2]]
-                    attn_weights = attn_weights + causal_mask
+                    attn_weights = attn_weights + attention_mask
+                    attn_weights = torch.max(
+                        attn_weights, torch.tensor(torch.finfo(attn_weights.dtype).min)
+                    )
 
                 # upcast attention to fp32
                 attn_weights = nn.functional.softmax(
@@ -439,8 +443,10 @@ class QuantMistralAttention(nn.Module):
                                 raise ValueError(
                                     f"Attention mask should be of size {(bsz, 1, q_len, kv_seq_len)}, but is {attention_mask.size()}"
                                 )
-                            causal_mask = attention_mask[:, :, :, : key_states.shape[-2]]
-                            attn_weights = attn_weights + causal_mask
+                            attn_weights = attn_weights + attention_mask
+                            attn_weights = torch.max(
+                                attn_weights, torch.tensor(torch.finfo(attn_weights.dtype).min)
+                            )
 
                         # upcast attention to fp32
                         attn_weights = nn.functional.softmax(
@@ -466,8 +472,10 @@ class QuantMistralAttention(nn.Module):
                             raise ValueError(
                                 f"Attention mask should be of size {(bsz, 1, q_len, kv_seq_len)}, but is {attention_mask.size()}"
                             )
-                        causal_mask = attention_mask[:, :, :, : key_states.shape[-2]]
-                        attn_weights = attn_weights + causal_mask
+                        attn_weights = attn_weights + attention_mask
+                        attn_weights = torch.max(
+                            attn_weights, torch.tensor(torch.finfo(attn_weights.dtype).min)
+                        )
 
                     # upcast attention to fp32
                     attn_weights = nn.functional.softmax(
@@ -539,8 +547,10 @@ class QuantMistralAttention(nn.Module):
                         raise ValueError(
                             f"Attention mask should be of size {(bsz, 1, q_len, kv_seq_len)}, but is {attention_mask.size()}"
                         )
-                    causal_mask = attention_mask[:, :, :, : key_states.shape[-2]]
-                    attn_weights = attn_weights + causal_mask
+                    attn_weights = attn_weights + attention_mask
+                    attn_weights = torch.max(
+                        attn_weights, torch.tensor(torch.finfo(attn_weights.dtype).min)
+                    )
 
                 # upcast attention to fp32
                 attn_weights = nn.functional.softmax(
