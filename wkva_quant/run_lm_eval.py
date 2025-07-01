@@ -11,8 +11,6 @@ import os
 import json
 
 import warnings
-# Ignore all warnings
-warnings.filterwarnings("ignore")
 
 from utils import (
     load_model_and_tokenizer, 
@@ -54,7 +52,11 @@ def run_lm_eval(
 
 
 if __name__ == '__main__':
+    # Ignore all warnings
+    warnings.filterwarnings("ignore")
+    # Set random seed
     set_seed(42)
+    
     parser = argparse.ArgumentParser()
     add_common_args(parser)
     add_quant_args(parser)

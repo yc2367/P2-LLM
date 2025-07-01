@@ -113,6 +113,8 @@ def load_model_and_tokenizer(model_name, quant_config=None, device_map="cuda:0",
 
     if 'llama' in model_path_fp16.lower():
         config = LlamaConfig.from_pretrained(model_path_fp16)
+        config.use_slow_attn = use_slow_attn
+
         if use_fp16:
             from transformers import LlamaForCausalLM
             model = LlamaForCausalLM.from_pretrained(
@@ -123,7 +125,6 @@ def load_model_and_tokenizer(model_name, quant_config=None, device_map="cuda:0",
             )
         else:
             from models import QuantLlamaForCausalLM
-            config.use_slow_attn = use_slow_attn
             if quant_config.w_bits >= 16:
                 model = QuantLlamaForCausalLM.from_pretrained(
                     model_path_fp16,
@@ -154,6 +155,8 @@ def load_model_and_tokenizer(model_name, quant_config=None, device_map="cuda:0",
                     model.set_model_prefill(model_prefill.model, model_prefill.lm_head)
     elif 'mistral' in model_path_fp16.lower():
         config = MistralConfig.from_pretrained(model_path_fp16)
+        config.use_slow_attn = use_slow_attn
+
         if use_fp16:
             from transformers import MistralForCausalLM
             model = MistralForCausalLM.from_pretrained(

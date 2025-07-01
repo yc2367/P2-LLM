@@ -1,14 +1,14 @@
 #!/bin/bash
 
 ########## Modify the path according to your HOME directory ##########
-HOME_DIR="/root/workspace/P2-LLM/wkva_quant"
+HOME_DIR="/home/yc2367/llm/P2-LLM/wkva_quant"
 AWQ_DIR="/share/abdelfattah/temp_yc2367/awq_quant_model"
 ######################################################################
 
 OUTPUT_DIR=${HOME_DIR}/results/gsm8k_cot
 
-model_list=("llama-3.2-3b-ins")
-task_list="gsm8k_cot_llama"
+model_list=("mistral-7b-ins")
+task_list="gsm8k_cot"
 # GSM8K-CoT-Llama
 limit=1319 # number of samples in GSM8K dataset
 num_fewshot=8
@@ -52,20 +52,20 @@ do
                                         python ${HOME_DIR}/run_lm_eval.py --model_name ${model_name} \
                                             --use_fp16 \
                                             --tasks ${task_list} --batch_size ${batch_size} --limit ${limit} \
-                                            --num_fewshot ${num_fewshot} --fewshot_as_multiturn --apply_chat_template \
+                                            --num_fewshot ${num_fewshot} \
                                             --output_dir ${OUTPUT_DIR}
                                         
                                         ####################  Weight FP16  ####################
                                         python ${HOME_DIR}/run_lm_eval.py --model_name ${model_name} \
                                             --tasks ${task_list} --batch_size ${batch_size} --limit ${limit} \
-                                            --num_fewshot ${num_fewshot} --fewshot_as_multiturn --apply_chat_template \
+                                            --num_fewshot ${num_fewshot} \
                                             --output_dir ${OUTPUT_DIR} \
                                             --kv_quant_method "KTVT" --kv_residual_len 4 --kv_quant_post_attn \
                                             --k_bits 4 --v_bits 4 --k_group_size 128 --v_group_size 128 \
                                             
                                         python ${HOME_DIR}/run_lm_eval.py --model_name ${model_name} \
                                             --tasks ${task_list} --batch_size ${batch_size} --limit ${limit} \
-                                            --num_fewshot ${num_fewshot} --fewshot_as_multiturn --apply_chat_template \
+                                            --num_fewshot ${num_fewshot} \
                                             --output_dir ${OUTPUT_DIR} \
                                             --kv_quant_method "KTVT" --kv_residual_len 4 --kv_quant_post_attn --apply_k_scale \
                                             --k_bits 4 --v_bits 4 --k_group_size 128 --v_group_size 128 \
@@ -73,7 +73,7 @@ do
                                         ####################  KV-cache FP16  ####################
                                         python ${HOME_DIR}/run_lm_eval.py --model_name ${model_name} \
                                             --tasks ${task_list} --batch_size ${batch_size} --limit ${limit} \
-                                            --num_fewshot ${num_fewshot} --fewshot_as_multiturn --apply_chat_template \
+                                            --num_fewshot ${num_fewshot} \
                                             --output_dir ${OUTPUT_DIR} \
                                             --w_bits ${w_bits} --w_group_size ${w_group_size} \
                                             --awq_model_path_lp ${AWQ_DIR}/${model_name}/w${w_bits}-g${w_group_size}
@@ -81,7 +81,7 @@ do
                                         ####################  KTVT  ####################
                                         python ${HOME_DIR}/run_lm_eval.py --model_name ${model_name} \
                                             --tasks ${task_list} --batch_size ${batch_size} --limit ${limit} \
-                                            --num_fewshot ${num_fewshot} --fewshot_as_multiturn --apply_chat_template \
+                                            --num_fewshot ${num_fewshot} \
                                             --output_dir ${OUTPUT_DIR} \
                                             --kv_quant_method "KTVT" --kv_residual_len ${kv_residual_len} --kv_quant_post_attn \
                                             --k_bits ${k_bits} --v_bits ${v_bits} --k_group_size ${k_group_size} --v_group_size ${v_group_size} \
@@ -93,7 +93,7 @@ do
                                         
                                         python ${HOME_DIR}/run_lm_eval.py --model_name ${model_name} \
                                             --tasks ${task_list} --batch_size ${batch_size} --limit ${limit} \
-                                            --num_fewshot ${num_fewshot} --fewshot_as_multiturn --apply_chat_template \
+                                            --num_fewshot ${num_fewshot} \
                                             --output_dir ${OUTPUT_DIR} \
                                             --kv_quant_method "KTVT" --kv_residual_len ${kv_residual_len} --kv_quant_post_attn --apply_k_scale \
                                             --k_bits ${k_bits} --v_bits ${v_bits} --k_group_size ${k_group_size} --v_group_size ${v_group_size} \

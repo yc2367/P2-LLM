@@ -19,7 +19,7 @@ kv_residual_len_list=(1 4)
 p_bits_list=(12)
 
 w_bits_list=(4)
-w_group_size_list=(64 32)
+w_group_size_list=(128 64 32)
 
 a_bits=(8)
 a_group_size_list=(128 -1)

@@ -1,7 +1,7 @@
 #!/bin/bash
 
 ########## Modify the path according to your HOME directory ##########
-HOME_DIR="/root/workspace/P2-LLM/wkva_quant"
+HOME_DIR="/home/yc2367/llm/P2-LLM/wkva_quant"
 ######################################################################
 
 SCRIPTS_DIR="${HOME_DIR}/scripts_template"
@@ -18,4 +18,4 @@ fi
 touch ${output_file}
 echo ${output_file}
 
-CUDA_VISIBLE_DEVICES=0 bash ${SCRIPTS_DIR}/test_gsm8k_mistral_template.sh  &>  ${output_file}
+CUDA_VISIBLE_DEVICES=0 bash ${SCRIPTS_DIR}/test_gsm8k_llama_template.sh  &>  ${output_file}
