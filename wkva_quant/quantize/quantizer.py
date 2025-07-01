@@ -219,15 +219,15 @@ def p_quant_per_block(
     
     if q_bits == 8:
         x_fp_tmp = x_fp.view(torch.int16)
-        x_dq     = x_fp_tmp.bitwise_and(65408) 
+        x_dq     = x_fp_tmp.bitwise_and(65472) 
         
         #NOTE (Yuzong): This Boolean masking operation is to simualte the rounding of LSBs when quantizing the original FP16 value,
         #               which mimics the "round-to-nearest-even" of floating-point arithmetic.
         #               However, we found that this rounding doesn't impact the accuracy compared to directly dropping LSBs, 
         #               but will significantly slow down the GPU. Hence, we comment out this operation for faster simualtion speed.
-        # x_fp_lsb = x_fp_tmp.bitwise_and(127)
-        # roundup_mask = x_fp_lsb.gt(63)
-        # x_dq[roundup_mask] = x_dq[roundup_mask] + 128
+        # x_fp_lsb = x_fp_tmp.bitwise_and(63)
+        # roundup_mask = x_fp_lsb.gt(31)
+        # x_dq[roundup_mask] = x_dq[roundup_mask] + 64
 
         x_dq = x_dq.view(torch.float16)
         return x_dq

@@ -7,8 +7,8 @@ AWQ_DIR="/share/abdelfattah/temp_yc2367/awq_quant_model"
 
 OUTPUT_DIR=${HOME_DIR}/results/ppl
 
-model_list=("llama-2-7b" "llama-2-13b" "llama-3.1-8b" "llama-3.2-3b")
-model_list=("opt-6.7b" "opt-13b")
+model_list=("llama-7b" "llama-13b" "llama-2-7b" "llama-2-13b" "llama-3.1-8b" "llama-3.2-3b")
+model_list=("mistral-7b")
 
 dataset_list="wikitext,c4"
 

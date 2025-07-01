@@ -5,7 +5,7 @@ HOME_DIR="/home/yc2367/llm/P2-LLM/wkva_quant"
 AWQ_DIR="/share/abdelfattah/temp_yc2367/awq_quant_model"
 ######################################################################
 
-OUTPUT_DIR=${HOME_DIR}/results/gsm8k_cot_llama
+OUTPUT_DIR=${HOME_DIR}/results/gsm8k_cot
 
 model_list=("llama-3.2-3b-ins")
 task_list="gsm8k_cot_llama"
@@ -18,11 +18,11 @@ k_bits_list=(4)
 v_bits_list=(4)
 k_group_size_list=(128)
 v_group_size_list=(128)
-kv_residual_len_list=(4 8)
-p_bits_list=(8)
+kv_residual_len_list=(4)
+p_bits_list=(12)
 
 w_bits_list=(4)
-w_group_size_list=(64 32)
+w_group_size_list=(128 64 32)
 
 a_bits=(8)
 a_group_size_list=(128 -1)

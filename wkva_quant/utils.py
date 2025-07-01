@@ -3,7 +3,7 @@ import importlib
 import numpy as np
 import random, torch
 from functools import reduce
-from transformers import AutoTokenizer, AutoModelForCausalLM, AutoConfig, LlamaConfig, OPTConfig
+from transformers import AutoTokenizer, AutoModelForCausalLM, AutoConfig, LlamaConfig, MistralConfig
 
 from quantize import QuantConfig
 
@@ -113,6 +113,8 @@ def load_model_and_tokenizer(model_name, quant_config=None, device_map="cuda:0",
 
     if 'llama' in model_path_fp16.lower():
         config = LlamaConfig.from_pretrained(model_path_fp16)
+        config.use_slow_attn = use_slow_attn
+
         if use_fp16:
             from transformers import LlamaForCausalLM
             model = LlamaForCausalLM.from_pretrained(
@@ -123,7 +125,6 @@ def load_model_and_tokenizer(model_name, quant_config=None, device_map="cuda:0",
             )
         else:
             from models import QuantLlamaForCausalLM
-            config.use_slow_attn = use_slow_attn
             if quant_config.w_bits >= 16:
                 model = QuantLlamaForCausalLM.from_pretrained(
                     model_path_fp16,
@@ -152,28 +153,30 @@ def load_model_and_tokenizer(model_name, quant_config=None, device_map="cuda:0",
                     )
                     model_prefill.eval()
                     model.set_model_prefill(model_prefill.model, model_prefill.lm_head)
-    elif 'opt' in model_path_fp16.lower():
-        config = OPTConfig.from_pretrained(model_path_fp16)
+    elif 'mistral' in model_path_fp16.lower():
+        config = MistralConfig.from_pretrained(model_path_fp16)
+        config.use_slow_attn = use_slow_attn
+
         if use_fp16:
-            from transformers import OPTForCausalLM
-            model = OPTForCausalLM.from_pretrained(
+            from transformers import MistralForCausalLM
+            model = MistralForCausalLM.from_pretrained(
                 model_path_fp16,
                 config=config,
                 torch_dtype=torch.float16,
                 device_map=device_map
             )
         else:
-            from models import QuantOPTForCausalLM
+            from models import QuantMistralForCausalLM
             if quant_config.w_bits >= 16:
-                model = QuantOPTForCausalLM.from_pretrained(
+                model = QuantMistralForCausalLM.from_pretrained(
                     model_path_fp16,
                     config=config,
                     torch_dtype=torch.float16,
                     device_map=device_map,
                     quant_config=quant_config
                 )
-            elif quant_config.w_bits in [4, 6, 8]:
-                model = QuantOPTForCausalLM.from_pretrained(
+            elif quant_config.w_bits in [4, 6]:
+                model = QuantMistralForCausalLM.from_pretrained(
                     quant_config.awq_model_path_lp,
                     config=config,
                     torch_dtype=torch.float16,
@@ -181,8 +184,17 @@ def load_model_and_tokenizer(model_name, quant_config=None, device_map="cuda:0",
                     quant_config=quant_config,
                     local_files_only=True
                 )
-                assert not quant_config.apply_w_disag, \
-                    f"OPT model does not support prefill-decode disaggregation."
+                if quant_config.apply_w_disag:
+                    model_prefill = QuantMistralForCausalLM.from_pretrained(
+                        quant_config.awq_model_path_hp,
+                        config=config,
+                        torch_dtype=torch.float16,
+                        device_map="cuda:1",
+                        quant_config=quant_config,
+                        local_files_only=True
+                    )
+                    model_prefill.eval()
+                    model.set_model_prefill(model_prefill.model, model_prefill.lm_head)
     else:
         model = AutoModelForCausalLM.from_pretrained(
             model_path_fp16,

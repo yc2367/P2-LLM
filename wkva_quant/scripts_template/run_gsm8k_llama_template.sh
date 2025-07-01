@@ -18,4 +18,4 @@ fi
 touch ${output_file}
 echo ${output_file}
 
-CUDA_VISIBLE_DEVICES=0 bash ${SCRIPTS_DIR}/test_ppl_template.sh  &>  ${output_file}
+CUDA_VISIBLE_DEVICES=0 bash ${SCRIPTS_DIR}/test_gsm8k_llama_template.sh  &>  ${output_file}
