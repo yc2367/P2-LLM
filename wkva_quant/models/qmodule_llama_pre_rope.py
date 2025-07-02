@@ -641,6 +641,7 @@ class QuantLlamaAttention(nn.Module):
                     value_states_full = repeat_kv(value_states_float, self.num_key_value_groups)
                     attn_output = torch.matmul(attn_weights, value_states_full) 
                 else:  # value_states_float will never be None in this case
+                    value_states_float_len = value_states_float.shape[-2]
                     value_states_full_int = repeat_kv(value_states_quant_int, self.num_key_value_groups)
                     value_states_full_scale = repeat_kv(value_states_quant_scale, self.num_key_value_groups)
                     value_states_full_float = repeat_kv(value_states_float, self.num_key_value_groups)

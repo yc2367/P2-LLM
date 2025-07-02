@@ -204,7 +204,7 @@ def p_quant_per_block(
     
     if q_bits == 12:
         x_fp_tmp = x_fp.view(torch.int16)
-        x_dq     = x_fp_tmp.bitwise_and(65528)
+        x_dq     = x_fp_tmp.bitwise_and(65532)
 
         #NOTE (Yuzong): This Boolean masking operation is to simualte the rounding of LSBs when quantizing the original FP16 value,
         #               which mimics the "round-to-nearest-even" of floating-point arithmetic.
