@@ -255,13 +255,12 @@ class QuantLlamaAttention(nn.Module):
                     key_quant_bias = None
                 
                 ######################### Divide KV-cache into Quantized and Float parts #########################
-                # if key_states.shape[-2] <= self.kv_residual_len:
-                #     key_states_quant = None
-                #     key_states_float = key_states
-                # else:
-                #     key_states_quant = key_states[:, :, :-self.kv_residual_len:, :]
-                #     key_states_float = key_states[:, :, -self.kv_residual_len::, :]
-                key_states_quant = key_states
+                if key_states.shape[-2] <= self.kv_residual_len:
+                    key_states_quant = None
+                    key_states_float = key_states
+                else:
+                    key_states_quant = key_states[:, :, :-self.kv_residual_len:, :]
+                    key_states_float = key_states[:, :, -self.kv_residual_len::, :]
                 
                 if value_states.shape[-2] <= self.kv_residual_len:
                     value_states_quant = None
@@ -285,13 +284,13 @@ class QuantLlamaAttention(nn.Module):
                     value_states_quant_scale = None
 
                 ############################################ Q x K.T ############################################
-                # if key_states_quant is None:
-                #     key_states = key_states_float
-                # else:
-                #     key_states = torch.cat([key_states_quant, key_states_float], dim=2)
+                if key_states_quant is None:
+                    key_states_full = key_states_float
+                else:
+                    key_states_full = torch.cat([key_states_quant, key_states_float], dim=2)
 
-                cos_q, sin_q, cos_k, sin_k = self.rotary_emb_post_quant(key_states_quant, position_ids, position_ids_cache)
-                query_states, key_states_full = apply_rotary_pos_emb_post_quant(query_states, key_states_quant, cos_q, sin_q, cos_k, sin_k)
+                cos_q, sin_q, cos_k, sin_k = self.rotary_emb_post_quant(key_states_full, position_ids, position_ids_cache)
+                query_states, key_states_full = apply_rotary_pos_emb_post_quant(query_states, key_states_full, cos_q, sin_q, cos_k, sin_k)
 
                 key_states_full = repeat_kv(key_states_full, self.num_key_value_groups)
                 attn_weights = torch.matmul(query_states, key_states_full.transpose(2, 3)) / math.sqrt(self.head_dim)
@@ -338,22 +337,21 @@ class QuantLlamaAttention(nn.Module):
 
                 ############################## Prepare Quantized and Float KV-cache ##############################
                 key_states_quant = past_key_value[0] # quantized key
-                value_states_quant_int = past_key_value[1] # quantized value integer
-                value_states_quant_scale = past_key_value[2] # quantized value scale
-                value_states_float = past_key_value[3] # full-precision residual value
-                key_quant_bias = past_key_value[4] # per-channel bias for key quantization
-                key_quant_scale = past_key_value[5] # per-channel scale for key quantization
+                key_states_quant = past_key_value[1] # full-precision residual key
+                value_states_quant_int = past_key_value[2] # quantized value integer
+                value_states_quant_scale = past_key_value[3] # quantized value scale
+                value_states_float = past_key_value[4] # full-precision residual value
+                key_quant_bias = past_key_value[5] # per-channel bias for key quantization
+                key_quant_scale = past_key_value[6] # per-channel scale for key quantization
 
+                key_states_float = torch.cat([key_states_float, key_states], dim=2)
                 value_states_float = torch.cat([value_states_float, value_states], dim=2)
+                key_states_float_len = key_states_float.shape[-2]
                 value_states_float_len = value_states_float.shape[-2]
+                assert key_states_float_len == value_states_float_len, \
+                    f"key_states_float_len and value_states_float_len should be equal !"
                 
                 ####################################### Quantize KV-cache ######################################
-                key_states_quant_new = k_quant_function(
-                    key_states, self.quant_config, 
-                    k_bias=key_quant_bias, k_scale=key_quant_scale
-                )
-                key_states_quant = torch.cat([key_states_quant, key_states_quant_new], dim=2)
-
                 if value_states_float_len > self.kv_residual_len:
                     assert value_states_float_len == self.kv_residual_len + 1, \
                         f"Wrong value_states_float_len !"
@@ -367,14 +365,31 @@ class QuantLlamaAttention(nn.Module):
                     else:
                         value_states_quant_int = torch.cat([value_states_quant_int, value_states_quant_int_new], dim=2)
                         value_states_quant_scale = torch.cat([value_states_quant_scale, value_states_quant_scale_new], dim=2)
-
                     value_states_float = value_states_float[:, :, 1:, :]
+
+                    key_states_quant_new = k_quant_function(
+                        key_states_float[:, :, :1, :], self.quant_config, 
+                        k_bias=key_quant_bias, k_scale=key_quant_scale
+                    )
+                    if key_states_quant is None:
+                        key_states_quant = key_states_quant_new
+                    else:
+                        key_states_quant = torch.cat([key_states_quant, key_states_quant_new], dim=2)
+                    key_states_float = key_states_float[:, :, 1:, :]
+
                     assert value_states_float.shape[-2] == self.kv_residual_len, \
                         f"Wrong value_states_float_len !"
+                    assert key_states_float.shape[-2] == self.kv_residual_len, \
+                        f"Wrong key_states_float_len !"
                 
                 ######################################## Q x K.T ########################################
-                cos_q, sin_q, cos_k, sin_k = self.rotary_emb_post_quant(key_states_quant, position_ids, position_ids_cache)
-                query_states, key_states_full = apply_rotary_pos_emb_post_quant(query_states, key_states_quant, cos_q, sin_q, cos_k, sin_k)
+                if key_states_quant is None:
+                    key_states_full = key_states_float
+                else:
+                    key_states_full = torch.cat([key_states_quant, key_states_float], dim=2)
+
+                cos_q, sin_q, cos_k, sin_k = self.rotary_emb_post_quant(key_states_full, position_ids, position_ids_cache)
+                query_states, key_states_full = apply_rotary_pos_emb_post_quant(query_states, key_states_full, cos_q, sin_q, cos_k, sin_k)
 
                 key_states_full = repeat_kv(key_states_full, self.num_key_value_groups)
                 attn_weights = torch.matmul(query_states, key_states_full.transpose(2, 3)) / math.sqrt(self.head_dim)
@@ -436,20 +451,12 @@ class QuantLlamaAttention(nn.Module):
                     key_quant_bias = None
                 
                 ######################### Divide KV-cache into Quantized and Float parts #########################
-                # if key_states.shape[-2] <= self.kv_residual_len:
-                #     key_states_quant = None
-                #     key_states_float = key_states
-                # else:
-                #     key_states_quant = key_states[:, :, :-self.kv_residual_len:, :]
-                #     key_states_float = key_states[:, :, -self.kv_residual_len::, :]
-                
-                # if value_states.shape[-2] <= self.kv_residual_len:
-                #     value_states_quant = None
-                #     value_states_float = value_states
-                # else:
-                #     value_states_quant = value_states[:, :, :-self.kv_residual_len:, :]
-                #     value_states_float = value_states[:, :, -self.kv_residual_len::, :]
-                key_states_quant = key_states
+                if key_states.shape[-2] <= self.kv_residual_len:
+                    key_states_quant = None
+                    key_states_float = key_states
+                else:
+                    key_states_quant = key_states[:, :, :-self.kv_residual_len:, :]
+                    key_states_float = key_states[:, :, -self.kv_residual_len::, :]
                 
                 if value_states.shape[-2] <= self.kv_residual_len:
                     value_states_quant = None
@@ -459,10 +466,10 @@ class QuantLlamaAttention(nn.Module):
                     value_states_float = value_states[:, :, -self.kv_residual_len::, :]
                 
                 ############################################ Q x K.T ############################################
-                cos_q, sin_q, cos_k, sin_k = self.rotary_emb_post_quant(key_states_quant, position_ids, position_ids_cache)
-                query_states, key_states = apply_rotary_pos_emb_post_quant(query_states, key_states_quant, cos_q, sin_q, cos_k, sin_k)
+                cos_q, sin_q, cos_k, sin_k = self.rotary_emb_post_quant(key_states, position_ids, position_ids_cache)
+                query_states, key_states_full = apply_rotary_pos_emb_post_quant(query_states, key_states, cos_q, sin_q, cos_k, sin_k)
 
-                key_states = repeat_kv(key_states, self.num_key_value_groups)
+                key_states_full = repeat_kv(key_states_full, self.num_key_value_groups)
                 #NOTE The "v_quant_function" here is not doing any quantization by setting "use_fp16=True".
                 # It simply returns a format that allows multiplying with quantized attn-score.
                 value_states_int, value_states_scale = v_quant_function(
@@ -480,7 +487,7 @@ class QuantLlamaAttention(nn.Module):
 
                     ############################################ Q x K.T ############################################
                     for i_h in range(0, self.num_heads // 4): #NOTE the number of heads processed in every iteration is hard-coded "4"
-                        attn_weights = torch.matmul(query_states[:, i_h*4 : (i_h+1)*4, :, :], key_states[:, i_h*4 : (i_h+1)*4, :, :].transpose(2, 3)) / math.sqrt(self.head_dim)
+                        attn_weights = torch.matmul(query_states[:, i_h*4 : (i_h+1)*4, :, :], key_states_full[:, i_h*4 : (i_h+1)*4, :, :].transpose(2, 3)) / math.sqrt(self.head_dim)
                         if attn_weights.size() != (bsz, 4, q_len, kv_seq_len):
                             raise ValueError(
                                 f"Attention weights should be of size {(bsz, 4, q_len, kv_seq_len)}, but is"
@@ -508,7 +515,7 @@ class QuantLlamaAttention(nn.Module):
                         ) 
                 else:
                     ############################################ Q x K.T ############################################
-                    attn_weights = torch.matmul(query_states, key_states.transpose(2, 3)) / math.sqrt(self.head_dim)
+                    attn_weights = torch.matmul(query_states, key_states_full.transpose(2, 3)) / math.sqrt(self.head_dim)
                     if attn_weights.size() != (bsz, self.num_heads, q_len, kv_seq_len):
                         raise ValueError(
                             f"Attention weights should be of size {(bsz, self.num_heads, q_len, kv_seq_len)}, but is"
@@ -554,17 +561,56 @@ class QuantLlamaAttention(nn.Module):
 
                 ############################## Prepare Quantized and Float KV-cache ##############################
                 key_states_quant = past_key_value[0] # quantized key
-                value_states_quant_int = past_key_value[1] # quantized value integer
-                value_states_quant_scale = past_key_value[2] # quantized value scale
-                value_states_float = past_key_value[3] # full-precision residual value
-                key_quant_bias = past_key_value[4] # per-channel bias for key quantization
-                key_quant_scale = past_key_value[5] # per-channel scale for key quantization
+                key_states_quant = past_key_value[1] # full-precision residual key
+                value_states_quant_int = past_key_value[2] # quantized value integer
+                value_states_quant_scale = past_key_value[3] # quantized value scale
+                value_states_float = past_key_value[4] # full-precision residual value
+                key_quant_bias = past_key_value[5] # per-channel bias for key quantization
+                key_quant_scale = past_key_value[6] # per-channel scale for key quantization
 
+                key_states_float = torch.cat([key_states_float, key_states], dim=2)
                 value_states_float = torch.cat([value_states_float, value_states], dim=2)
+                key_states_float_len = key_states_float.shape[-2]
                 value_states_float_len = value_states_float.shape[-2]
+                assert key_states_float_len == value_states_float_len, \
+                    f"key_states_float_len and value_states_float_len should be equal !"
+                
+                ####################################### Quantize KV-cache ######################################
+                if value_states_float_len > self.kv_residual_len:
+                    assert value_states_float_len == self.kv_residual_len + 1, \
+                        f"Wrong value_states_float_len !"
+
+                    value_states_quant_int_new, value_states_quant_scale_new = v_quant_function(
+                        value_states_float[:, :, :1, :], self.quant_config
+                    ) 
+                    if value_states_quant_int is None:
+                        value_states_quant_int = value_states_quant_int_new
+                        value_states_quant_scale = value_states_quant_scale_new
+                    else:
+                        value_states_quant_int = torch.cat([value_states_quant_int, value_states_quant_int_new], dim=2)
+                        value_states_quant_scale = torch.cat([value_states_quant_scale, value_states_quant_scale_new], dim=2)
+                    value_states_float = value_states_float[:, :, 1:, :]
+
+                    key_states_quant_new = k_quant_function(
+                        key_states_float[:, :, :1, :], self.quant_config, 
+                        k_bias=key_quant_bias, k_scale=key_quant_scale
+                    )
+                    if key_states_quant is None:
+                        key_states_quant = key_states_quant_new
+                    else:
+                        key_states_quant = torch.cat([key_states_quant, key_states_quant_new], dim=2)
+                    key_states_float = key_states_float[:, :, 1:, :]
+
+                    assert value_states_float.shape[-2] == self.kv_residual_len, \
+                        f"Wrong value_states_float_len !"
+                    assert key_states_float.shape[-2] == self.kv_residual_len, \
+                        f"Wrong key_states_float_len !"
                 
                 ######################################## Q x K.T ########################################
-                key_states_full = torch.cat([key_states_quant, key_states], dim=2)
+                if key_states_quant is None:
+                    key_states_full = key_states_float
+                else:
+                    key_states_full = torch.cat([key_states_quant, key_states_float], dim=2)
 
                 cos_q, sin_q, cos_k, sin_k = self.rotary_emb_post_quant(key_states_full, position_ids, position_ids_cache)
                 query_states, key_states_full = apply_rotary_pos_emb_post_quant(query_states, key_states_full, cos_q, sin_q, cos_k, sin_k)
@@ -608,33 +654,9 @@ class QuantLlamaAttention(nn.Module):
                     attn_output_float = torch.matmul(attn_weights_float, value_states_full_float) 
                     attn_output = attn_output_quant + attn_output_float
 
-                ####################################### Quantize KV-cache ######################################
-                key_states_quant_new = k_quant_function(
-                    key_states, self.quant_config, 
-                    k_bias=key_quant_bias, k_scale=key_quant_scale
-                )
-                key_states_quant = torch.cat([key_states_quant, key_states_quant_new], dim=2)
-
-                if value_states_float_len > self.kv_residual_len:
-                    assert value_states_float_len == self.kv_residual_len + 1, \
-                        f"Wrong value_states_float_len !"
-
-                    value_states_quant_int_new, value_states_quant_scale_new = v_quant_function(
-                        value_states_float[:, :, :1, :], self.quant_config
-                    ) 
-                    if value_states_quant_int is None:
-                        value_states_quant_int = value_states_quant_int_new
-                        value_states_quant_scale = value_states_quant_scale_new
-                    else:
-                        value_states_quant_int = torch.cat([value_states_quant_int, value_states_quant_int_new], dim=2)
-                        value_states_quant_scale = torch.cat([value_states_quant_scale, value_states_quant_scale_new], dim=2)
-
-                    value_states_float = value_states_float[:, :, 1:, :]
-                    assert value_states_float.shape[-2] == self.kv_residual_len, \
-                        f"Wrong value_states_float_len !"
-
         past_key_value = (
-            key_states_quant, value_states_quant_int, value_states_quant_scale, value_states_float, 
+            key_states_quant, key_states_float,
+            value_states_quant_int, value_states_quant_scale, value_states_float, 
             key_quant_bias, key_quant_scale,
             position_ids_cache, kv_seq_len
         ) if use_cache else None
