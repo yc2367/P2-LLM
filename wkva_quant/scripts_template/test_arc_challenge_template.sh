@@ -45,34 +45,51 @@ do
                                 do
                                     for a_group_size in "${a_group_size_list[@]}"  
                                     do
-                                        # ####################  All FP16  ####################
-                                        # python ${HOME_DIR}/run_arc_challenge.py --model_name ${model_name} \
-                                        #     --use_fp16 \
-                                        #     --tasks ${task_list} --batch_size ${batch_size} \
-                                        #     --output_dir ${OUTPUT_DIR}
+                                        ####################  All FP16  ####################
+                                        python ${HOME_DIR}/run_lm_eval.py --model_name ${model_name} \
+                                            --use_fp16 \
+                                            --tasks ${task_list} --batch_size ${batch_size} \
+                                            --output_dir ${OUTPUT_DIR}
                                         
-                                        # ####################  Weight FP16  ####################
-                                        # python ${HOME_DIR}/run_arc_challenge.py --model_name ${model_name} \
-                                        #     --tasks ${task_list} --batch_size ${batch_size} \
-                                        #     --output_dir ${OUTPUT_DIR} \
-                                        #     --kv_quant_method "KTVT" \
-                                        #     --k_bits 4 --v_bits 4 --k_group_size 128 --v_group_size 128 \
+                                        ####################  Weight FP16  ####################
+                                        python ${HOME_DIR}/run_lm_eval.py --model_name ${model_name} \
+                                            --tasks ${task_list} --batch_size ${batch_size} \
+                                            --output_dir ${OUTPUT_DIR} \
+                                            --kv_quant_method "KTVT" --kv_residual_len ${kv_residual_len} \
+                                            --k_bits 4 --v_bits 4 --k_group_size 128 --v_group_size 128 \
                                             
-                                        # python ${HOME_DIR}/run_arc_challenge.py --model_name ${model_name} \
-                                        #     --tasks ${task_list} --batch_size ${batch_size} \
-                                        #     --output_dir ${OUTPUT_DIR} \
-                                        #     --kv_quant_method "KTVT" --apply_k_scale \
-                                        #     --k_bits 4 --v_bits 4 --k_group_size 128 --v_group_size 128 \
+                                        python ${HOME_DIR}/run_lm_eval.py --model_name ${model_name} \
+                                            --tasks ${task_list} --batch_size ${batch_size} \
+                                            --output_dir ${OUTPUT_DIR} \
+                                            --kv_quant_method "KTVT" --kv_residual_len ${kv_residual_len} --apply_k_scale \
+                                            --k_bits 4 --v_bits 4 --k_group_size 128 --v_group_size 128 \
+                                        
+                                        ####################  Weight INT6  ####################
+                                        python ${HOME_DIR}/run_gsm8k.py --model_name ${model_name} \
+                                            --tasks ${task_list} --batch_size ${batch_size} \
+                                            --output_dir ${OUTPUT_DIR} \
+                                            --kv_quant_method "KTVT" --kv_residual_len ${kv_residual_len} \
+                                            --k_bits 4 --v_bits 4 --k_group_size 128 --v_group_size 128 \
+                                            --w_bits 6 --w_group_size 128 \
+                                            --awq_model_path_lp ${AWQ_DIR}/${model_name}/w6-g128
+                                            
+                                        python ${HOME_DIR}/run_gsm8k.py --model_name ${model_name} \
+                                            --tasks ${task_list} --batch_size ${batch_size} \
+                                            --output_dir ${OUTPUT_DIR} \
+                                            --kv_quant_method "KTVT" --kv_residual_len ${kv_residual_len} --apply_k_scale \
+                                            --k_bits 4 --v_bits 4 --k_group_size 128 --v_group_size 128 \
+                                            --w_bits 6 --w_group_size 128 \
+                                            --awq_model_path_lp ${AWQ_DIR}/${model_name}/w6-g128
 
-                                        # ####################  KV-cache FP16  ####################
-                                        # python ${HOME_DIR}/run_arc_challenge.py --model_name ${model_name} \
-                                        #     --tasks ${task_list} --batch_size ${batch_size} \
-                                        #     --output_dir ${OUTPUT_DIR} \
-                                        #     --w_bits 4 --w_group_size 64 \
-                                        #     --awq_model_path_lp ${AWQ_DIR}/${model_name}/w4-g64
+                                        ####################  KV-cache FP16  ####################
+                                        python ${HOME_DIR}/run_lm_eval.py --model_name ${model_name} \
+                                            --tasks ${task_list} --batch_size ${batch_size} \
+                                            --output_dir ${OUTPUT_DIR} \
+                                            --w_bits 4 --w_group_size 128 \
+                                            --awq_model_path_lp ${AWQ_DIR}/${model_name}/w4-g128
                                         
                                         ####################  KTVT  ####################
-                                        python ${HOME_DIR}/run_arc_challenge.py --model_name ${model_name} \
+                                        python ${HOME_DIR}/run_lm_eval.py --model_name ${model_name} \
                                             --tasks ${task_list} --batch_size ${batch_size} \
                                             --output_dir ${OUTPUT_DIR} \
                                             --kv_quant_method "KTVT" --kv_residual_len ${kv_residual_len} \
@@ -83,7 +100,7 @@ do
                                             --a_bits ${a_bits} --a_group_size ${a_group_size} \
                                             --apply_w_disag --awq_model_path_hp ${AWQ_DIR}/${model_name}/w8-g256 
                                             
-                                        python ${HOME_DIR}/run_arc_challenge.py --model_name ${model_name} \
+                                        python ${HOME_DIR}/run_lm_eval.py --model_name ${model_name} \
                                             --tasks ${task_list} --batch_size ${batch_size} \
                                             --output_dir ${OUTPUT_DIR} \
                                             --kv_quant_method "KTVT" --kv_residual_len ${kv_residual_len} \
@@ -94,7 +111,7 @@ do
                                             --a_bits ${a_bits} --a_group_size ${a_group_size} \
                                             # --apply_w_disag --awq_model_path_hp ${AWQ_DIR}/${model_name}/w8-g256 
 
-                                        python ${HOME_DIR}/run_arc_challenge.py --model_name ${model_name} \
+                                        python ${HOME_DIR}/run_lm_eval.py --model_name ${model_name} \
                                             --tasks ${task_list} --batch_size ${batch_size} \
                                             --output_dir ${OUTPUT_DIR} \
                                             --kv_quant_method "KTVT" --kv_residual_len ${kv_residual_len} --apply_k_scale \
@@ -105,7 +122,7 @@ do
                                             --a_bits ${a_bits} --a_group_size ${a_group_size} \
                                             --apply_w_disag --awq_model_path_hp ${AWQ_DIR}/${model_name}/w8-g256 
                                         
-                                        python ${HOME_DIR}/run_arc_challenge.py --model_name ${model_name} \
+                                        python ${HOME_DIR}/run_lm_eval.py --model_name ${model_name} \
                                             --tasks ${task_list} --batch_size ${batch_size} \
                                             --output_dir ${OUTPUT_DIR} \
                                             --kv_quant_method "KTVT" --kv_residual_len ${kv_residual_len} --apply_k_scale \

@@ -11,6 +11,8 @@ import os
 import json
 
 import warnings
+# Ignore all warnings
+warnings.filterwarnings("ignore")
 
 from utils import (
     load_model_and_tokenizer, 
@@ -23,7 +25,7 @@ from utils import (
 
 
 def run_lm_eval(
-    model, tokenizer, args, max_length=4096
+    model, tokenizer, args, max_length=100
 ):
     model.seqlen = max_length
     lm_obj = HFLM(pretrained=model, tokenizer=tokenizer, add_bos_token=False, batch_size=args.batch_size)
@@ -41,10 +43,7 @@ def run_lm_eval(
             tasks=args.tasks,
             task_manager=task_manager,
             limit=args.limit,
-            log_samples=True,
-            num_fewshot=args.num_fewshot,
-            fewshot_as_multiturn=args.fewshot_as_multiturn,
-            apply_chat_template=args.apply_chat_template,
+            log_samples=True
         ) 
     res = make_table(results)
     
@@ -56,7 +55,7 @@ if __name__ == '__main__':
     warnings.filterwarnings("ignore")
     # Set random seed
     set_seed(42)
-    
+
     parser = argparse.ArgumentParser()
     add_common_args(parser)
     add_quant_args(parser)
@@ -64,9 +63,6 @@ if __name__ == '__main__':
     parser.add_argument("--batch_size", type=int, default=8, help="batch size for lm_eval tasks")
     parser.add_argument("--limit", type=int, default=None, help="limit number of samples to run")
     parser.add_argument("--verbose", action="store_true", help="Whether to print verbose information or not.")
-    parser.add_argument("--num_fewshot", type=int, default=0, help="Number of shots for evaluation")
-    parser.add_argument("--fewshot_as_multiturn", action="store_true", help="Whether to treat fewshot as multiturn or not.")
-    parser.add_argument("--apply_chat_template", action="store_true", help="Whether to apply chat template or not.")
     parser.add_argument("--output_dir", type=str, default="results/lm_eval", help="output directory")
     args = parser.parse_args()  
     
