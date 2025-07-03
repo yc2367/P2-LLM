@@ -77,6 +77,7 @@ do
                                             --output_dir ${OUTPUT_DIR} \
                                             --kv_quant_method "KTVT" --kv_residual_len ${kv_residual_len} --kv_quant_post_attn \
                                             --k_bits 4 --v_bits 4 --k_group_size 128 --v_group_size 128 \
+                                            --p_bits 8 --a_bits 8 \
                                             --w_bits 6 --w_group_size 128 \
                                             --awq_model_path_lp ${AWQ_DIR}/${model_name}/w6-g128
                                             
@@ -86,6 +87,7 @@ do
                                             --output_dir ${OUTPUT_DIR} \
                                             --kv_quant_method "KTVT" --kv_residual_len ${kv_residual_len} --kv_quant_post_attn --apply_k_scale \
                                             --k_bits 4 --v_bits 4 --k_group_size 128 --v_group_size 128 \
+                                            --p_bits 8 --a_bits 8 \
                                             --w_bits 6 --w_group_size 128 \
                                             --awq_model_path_lp ${AWQ_DIR}/${model_name}/w6-g128
 

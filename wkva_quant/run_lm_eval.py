@@ -37,13 +37,23 @@ def run_lm_eval(
     logger.info(f"Evaluation Task(s): {args.tasks}")
     logger.info(f"Batch Size: {args.batch_size}")
     logger.info(f"Limit: {args.limit}")
+
+    #NOTE (Yuzong): use "confirm_run_unsafe_code" to support HumanEval dataset
+    confirm_run_unsafe_code = False
+    for task in args.tasks:
+        if 'humaneval' in task.lower():
+            import os; os.environ["HF_ALLOW_CODE_EVAL"] = "1"
+            confirm_run_unsafe_code = True
+            break
+
     with torch.no_grad():
         results = lm_eval.simple_evaluate( # call simple_evaluate
             model=lm_obj,
             tasks=args.tasks,
             task_manager=task_manager,
             limit=args.limit,
-            log_samples=True
+            log_samples=True,
+            confirm_run_unsafe_code=confirm_run_unsafe_code,
         ) 
     res = make_table(results)
     
@@ -122,5 +132,5 @@ if __name__ == '__main__':
     with open(output_file_path, "w") as f:
         json.dump(res, f, indent=4)
 
-    print(f"Results saved to {output_file_path}")
+    print(f"Results saved to {output_file_path} \n\n")
     

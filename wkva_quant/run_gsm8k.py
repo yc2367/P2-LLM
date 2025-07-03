@@ -126,5 +126,5 @@ if __name__ == '__main__':
     with open(output_file_path, "w") as f:
         json.dump(res, f, indent=4)
 
-    print(f"Results saved to {output_file_path}")
+    print(f"Results saved to {output_file_path} \n\n")
     
