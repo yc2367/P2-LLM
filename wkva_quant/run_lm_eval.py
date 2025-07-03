@@ -42,7 +42,10 @@ def run_lm_eval(
     confirm_run_unsafe_code = False
     for task in args.tasks:
         if 'humaneval' in task.lower():
-            import os; os.environ["HF_ALLOW_CODE_EVAL"] = "1"
+            import os
+            os.environ["HF_ALLOW_CODE_EVAL"] = "1"
+            os.environ["TOKENIZERS_PARALLELISM"] = "false"
+
             confirm_run_unsafe_code = True
             break
 
@@ -53,7 +56,10 @@ def run_lm_eval(
             task_manager=task_manager,
             limit=args.limit,
             log_samples=True,
-            confirm_run_unsafe_code=confirm_run_unsafe_code,
+            num_fewshot=args.num_fewshot,
+            fewshot_as_multiturn=args.fewshot_as_multiturn,
+            apply_chat_template=args.apply_chat_template,
+            confirm_run_unsafe_code=confirm_run_unsafe_code
         ) 
     res = make_table(results)
     
@@ -73,6 +79,9 @@ if __name__ == '__main__':
     parser.add_argument("--batch_size", type=int, default=8, help="batch size for lm_eval tasks")
     parser.add_argument("--limit", type=int, default=None, help="limit number of samples to run")
     parser.add_argument("--verbose", action="store_true", help="Whether to print verbose information or not.")
+    parser.add_argument("--num_fewshot", type=int, default=0, help="Number of shots for evaluation")
+    parser.add_argument("--fewshot_as_multiturn", action="store_true", help="Whether to treat fewshot as multiturn or not.")
+    parser.add_argument("--apply_chat_template", action="store_true", help="Whether to apply chat template or not.")
     parser.add_argument("--output_dir", type=str, default="results/lm_eval", help="output directory")
     args = parser.parse_args()  
     

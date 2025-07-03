@@ -65,7 +65,7 @@ do
                                             --k_bits 4 --v_bits 4 --k_group_size 128 --v_group_size 128 \
                                         
                                         ####################  Weight INT6  ####################
-                                        python ${HOME_DIR}/run_gsm8k.py --model_name ${model_name} \
+                                        python ${HOME_DIR}/run_lm_eval.py --model_name ${model_name} \
                                             --tasks ${task_list} --batch_size ${batch_size} \
                                             --output_dir ${OUTPUT_DIR} \
                                             --kv_quant_method "KTVT" --kv_residual_len ${kv_residual_len} \
@@ -74,7 +74,7 @@ do
                                             --w_bits 6 --w_group_size 128 \
                                             --awq_model_path_lp ${AWQ_DIR}/${model_name}/w6-g128
                                             
-                                        python ${HOME_DIR}/run_gsm8k.py --model_name ${model_name} \
+                                        python ${HOME_DIR}/run_lm_eval.py --model_name ${model_name} \
                                             --tasks ${task_list} --batch_size ${batch_size} \
                                             --output_dir ${OUTPUT_DIR} \
                                             --kv_quant_method "KTVT" --kv_residual_len ${kv_residual_len} --apply_k_scale \
@@ -83,7 +83,7 @@ do
                                             --w_bits 6 --w_group_size 128 \
                                             --awq_model_path_lp ${AWQ_DIR}/${model_name}/w6-g128
                                         
-                                        python ${HOME_DIR}/run_gsm8k.py --model_name ${model_name} \
+                                        python ${HOME_DIR}/run_lm_eval.py --model_name ${model_name} \
                                             --tasks ${task_list} --batch_size ${batch_size} \
                                             --output_dir ${OUTPUT_DIR} \
                                             --kv_quant_method "KTVT" --kv_residual_len ${kv_residual_len} \
@@ -91,7 +91,7 @@ do
                                             --w_bits 6 --w_group_size 128 \
                                             --awq_model_path_lp ${AWQ_DIR}/${model_name}/w6-g128
                                             
-                                        python ${HOME_DIR}/run_gsm8k.py --model_name ${model_name} \
+                                        python ${HOME_DIR}/run_lm_eval.py --model_name ${model_name} \
                                             --tasks ${task_list} --batch_size ${batch_size} \
                                             --output_dir ${OUTPUT_DIR} \
                                             --kv_quant_method "KTVT" --kv_residual_len ${kv_residual_len} --apply_k_scale \
