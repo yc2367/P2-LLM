@@ -5,7 +5,7 @@ from typing import Optional
 
 @torch.no_grad()
 def a_quant_per_group(
-    x_fp: torch.Tensor, q_bits: int=8, group_size: int=128
+    x_fp: torch.Tensor, q_bits: int=8, group_size: int=-1
 ):
     """
     Symmetric per-group activation quantization.
@@ -26,6 +26,18 @@ def a_quant_per_group(
         assert num_groups * group_size == h_dim, \
             f"The input tensor's last dimension {x_fp.shape[-1]} is not divisible by group_size {group_size}"
     x_fp_new = x_fp.view(batch, seq_len, num_groups, group_size)
+
+    # ############### INT8 Quantization ###############
+    # qmax = 127
+    # rmax = torch.amax(x_fp_new.abs(), dim=-1, keepdim=True)
+    # rmax = rmax.clamp(min=1e-5)
+    # scale = (rmax / qmax).clamp_(min=1e-6)
+
+    # x_q  = torch.clamp(torch.round(x_fp_new / scale), min=-qmax, max=qmax)
+    # x_dq = x_q * scale
+    # x_dq = x_dq.view(batch, seq_len, h_dim)
+
+    # return x_dq
 
     ############### FP8-E4M3 Quantization ###############
     qmax = 448

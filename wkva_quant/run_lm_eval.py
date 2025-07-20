@@ -130,7 +130,8 @@ if __name__ == '__main__':
     if os.path.isfile(output_file_path):
         print(f'Found existing output file {output_file_name} for this experiment. Exit!')
         exit()
-    
+    print(f'Results will be saved to the output file: {output_file_name}\n')
+
     logger.info("#################### Loading model and tokenizer ... ####################")
     model, tokenizer = load_model_and_tokenizer(model_name, quant_config=quant_config, use_fp16=args.use_fp16)
     

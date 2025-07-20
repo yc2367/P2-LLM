@@ -9,7 +9,7 @@ OUTPUT_DIR=${HOME_DIR}/results/humaneval
 
 model_list=("llama-3.2-3b-ins" "llama-3.1-8b-ins")
 task_list="humaneval_instruct"
-batch_size=4
+batch_size=1
 
 k_bits_list=(4)
 v_bits_list=(4)
@@ -19,7 +19,7 @@ kv_residual_len_list=(1 16)
 p_bits_list=(8 12)
 
 w_bits_list=(4)
-w_group_size_list=(128 64)
+w_group_size_list=(64)
 
 a_bits=(8)
 a_group_size_list=(-1)

@@ -15,14 +15,14 @@ k_bits_list=(4)
 v_bits_list=(4)
 k_group_size_list=(128)
 v_group_size_list=(128)
-kv_residual_len_list=(1 4)
+kv_residual_len_list=(1 16)
 p_bits_list=(8 12)
 
 w_bits_list=(4)
-w_group_size_list=(128 64)
+w_group_size_list=(64)
 
 a_bits=(8)
-a_group_size_list=(128 -1)
+a_group_size_list=(-1)
 
 
 for model_name in "${model_list[@]}"
