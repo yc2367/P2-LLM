@@ -4,8 +4,9 @@
 HOME_DIR="/home/yc2367/llm/P2-LLM/3rdparty/llm-awq"
 AWQ_DIR="/share/abdelfattah/temp_yc2367/awq_quant_model"
 
-model_name_list=("mistral-7b" "mistral-7b-ins" "llama-7b" "llama-13b" "llama-2-7b" "llama-2-13b" "llama-3.1-8b" "llama-3.2-3b" "llama-3.1-8b-ins" "llama-3.2-3b-ins")
+model_name_list=("llama-7b" "llama-13b" "llama-2-7b" "llama-2-13b" "llama-3.1-8b" "llama-3.2-3b" "llama-3.1-8b-ins" "llama-3.2-3b-ins" "mistral-7b")
 
+wq_dtype="bitmod"
 w_bit_list=(4)
 group_size_list=(128 64)
 
@@ -38,27 +39,31 @@ do
         model_path="meta-llama/Llama-3.2-3B-Instruct"
     elif [[ ${model_name} == "mistral-7b" ]]
     then
-        model_path="mistralai/Mistral-7B-v0.3"
-    elif [[ ${model_name} == "mistral-7b-ins" ]]
-    then
-        model_path="mistralai/Mistral-7B-Instruct-v0.3"
+        model_path="mistralai/Mistral-7B-v0.1"
     fi
 
     for w_bit in "${w_bit_list[@]}"
     do
         for group_size in "${group_size_list[@]}"
         do
-            awq_cache_path=${HOME_DIR}/awq_cache/${model_name}-w${w_bit}-g${group_size}.pt
-            fake_quant_save_path="${AWQ_DIR}/${model_name}/w${w_bit}-g${group_size}"
+            if [[ ${wq_dtype} == "bitmod" ]]
+            then
+                awq_cache_path=${HOME_DIR}/awq_cache/${model_name}-w${w_bit}-g${group_size}-bitmod.pt
+                fake_quant_save_path=${AWQ_DIR}/${model_name}/w${w_bit}-g${group_size}-bitmod
+            else 
+                awq_cache_path=${HOME_DIR}/awq_cache/${model_name}-w${w_bit}-g${group_size}.pt
+                fake_quant_save_path=${AWQ_DIR}/${model_name}/w${w_bit}-g${group_size}
+            fi
 
             echo 
             echo 
             echo "#################### Running Experiment ####################"
-            echo "Model name        = ${model_name}"
-            echo "Model path        = ${model_path}"
-            echo "Quant precision   = ${w_bit}"
-            echo "Quant group size  = ${group_size}"
-            echo "AWQ cache path    = ${awq_cache_path}"
+            echo "Model name            = ${model_name}"
+            echo "Model path            = ${model_path}"
+            echo "Quant precision       = ${w_bit}"
+            echo "Quant group size      = ${group_size}"
+            echo "AWQ cache path        = ${awq_cache_path}"
+            echo "Fake quant save path  = ${fake_quant_save_path}"
             echo "############################################################"
             echo 
 

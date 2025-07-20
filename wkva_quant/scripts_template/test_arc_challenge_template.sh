@@ -103,10 +103,10 @@ do
                                         python ${HOME_DIR}/run_lm_eval.py --model_name ${model_name} \
                                             --tasks ${task_list} --batch_size ${batch_size} \
                                             --output_dir ${OUTPUT_DIR} \
-                                            --w_bits 4 --w_group_size 128 \
-                                            --awq_model_path_lp ${AWQ_DIR}/${model_name}/w4-g128
+                                            --w_bits 4 --w_group_size ${w_group_size} \
+                                            --awq_model_path_lp ${AWQ_DIR}/${model_name}/w4-g${w_group_size}
                                         
-                                        ####################  KTVT  ####################
+                                        ####################  KTVT  ####################                                            
                                         python ${HOME_DIR}/run_lm_eval.py --model_name ${model_name} \
                                             --tasks ${task_list} --batch_size ${batch_size} \
                                             --output_dir ${OUTPUT_DIR} \
@@ -115,30 +115,7 @@ do
                                             --p_bits ${p_bits} \
                                             --w_bits ${w_bits} --w_group_size ${w_group_size} \
                                             --awq_model_path_lp ${AWQ_DIR}/${model_name}/w${w_bits}-g${w_group_size} \
-                                            --a_bits ${a_bits} --a_group_size ${a_group_size} \
-                                            --apply_w_disag --awq_model_path_hp ${AWQ_DIR}/${model_name}/w8-g256 
-                                            
-                                        python ${HOME_DIR}/run_lm_eval.py --model_name ${model_name} \
-                                            --tasks ${task_list} --batch_size ${batch_size} \
-                                            --output_dir ${OUTPUT_DIR} \
-                                            --kv_quant_method "KTVT" --kv_residual_len ${kv_residual_len} \
-                                            --k_bits ${k_bits} --v_bits ${v_bits} --k_group_size ${k_group_size} --v_group_size ${v_group_size} \
-                                            --p_bits ${p_bits} \
-                                            --w_bits ${w_bits} --w_group_size ${w_group_size} \
-                                            --awq_model_path_lp ${AWQ_DIR}/${model_name}/w${w_bits}-g${w_group_size} \
-                                            --a_bits ${a_bits} --a_group_size ${a_group_size} \
-                                            # --apply_w_disag --awq_model_path_hp ${AWQ_DIR}/${model_name}/w8-g256 
-
-                                        python ${HOME_DIR}/run_lm_eval.py --model_name ${model_name} \
-                                            --tasks ${task_list} --batch_size ${batch_size} \
-                                            --output_dir ${OUTPUT_DIR} \
-                                            --kv_quant_method "KTVT" --kv_residual_len ${kv_residual_len} --apply_k_scale \
-                                            --k_bits ${k_bits} --v_bits ${v_bits} --k_group_size ${k_group_size} --v_group_size ${v_group_size} \
-                                            --p_bits ${p_bits} \
-                                            --w_bits ${w_bits} --w_group_size ${w_group_size} \
-                                            --awq_model_path_lp ${AWQ_DIR}/${model_name}/w${w_bits}-g${w_group_size} \
-                                            --a_bits ${a_bits} --a_group_size ${a_group_size} \
-                                            --apply_w_disag --awq_model_path_hp ${AWQ_DIR}/${model_name}/w8-g256 
+                                            --a_bits ${a_bits} --a_group_size ${a_group_size} 
                                         
                                         python ${HOME_DIR}/run_lm_eval.py --model_name ${model_name} \
                                             --tasks ${task_list} --batch_size ${batch_size} \
@@ -148,8 +125,7 @@ do
                                             --p_bits ${p_bits} \
                                             --w_bits ${w_bits} --w_group_size ${w_group_size} \
                                             --awq_model_path_lp ${AWQ_DIR}/${model_name}/w${w_bits}-g${w_group_size} \
-                                            --a_bits ${a_bits} --a_group_size ${a_group_size} \
-                                            # --apply_w_disag --awq_model_path_hp ${AWQ_DIR}/${model_name}/w8-g256 
+                                            --a_bits ${a_bits} --a_group_size ${a_group_size}
                                     done
                                 done
                             done

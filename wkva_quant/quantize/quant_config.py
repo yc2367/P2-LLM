@@ -17,8 +17,6 @@ class QuantConfig(dict):
         v_group_size: int=-1,
         # Weight quantization config
         awq_model_path_lp: Optional[str]=None,  # low-precision model directory
-        apply_w_disag: bool=False,              # whether to apply prefill-decode disaggregation for weights
-        awq_model_path_hp: Optional[str]=None,  # high-precision model directory
         # KV-cache quantization config
         kv_quant_method: str="KTVT",
         kv_residual_len: int=1,
@@ -39,9 +37,6 @@ class QuantConfig(dict):
         if (w_bits == 4):
             assert awq_model_path_lp, \
                 "When w_bits == 4, please provide the path to 4-bit AWQ-quantized model with --awq_model_path_lp"
-        if apply_w_disag:
-            assert awq_model_path_hp, \
-                "When applying prefill-decode disaggregation for weights, please provide the path to high-precision AWQ-quantized model with --awq_model_path_lp"
         
         for group_size in [w_group_size, a_group_size, q_group_size, k_group_size, v_group_size]:
             assert (group_size is None) or (group_size <= 0) or (group_size in [32, 64, 128, 256]), \
@@ -68,8 +63,6 @@ class QuantConfig(dict):
 
         # Weight quantization config
         self.awq_model_path_lp = awq_model_path_lp
-        self.apply_w_disag = apply_w_disag
-        self.awq_model_path_hp = awq_model_path_hp
 
         # KV-cache quantization config
         self.kv_quant_method = kv_quant_method

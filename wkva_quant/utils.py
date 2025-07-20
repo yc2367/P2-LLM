@@ -33,8 +33,6 @@ def add_quant_args(parser):
 
     ############### Weight Quantization Arguments ###############
     parser.add_argument("--awq_model_path_lp", type=str, default=None, help="Path to low-precision AWQ-quantized model.")
-    parser.add_argument("--apply_w_disag", action="store_true", default=False, help="Whether to apply prefill-decode disaggregation for weights.")
-    parser.add_argument("--awq_model_path_hp", type=str, default=None, help="Path to high-precision AWQ-quantized model.")
     
     ############### KV-cache Quantization Arguments ###############
     parser.add_argument("--kv_quant_method", type=str, default="KTVT", help="KV-cache quantization method: KCVT / KTVT.")
@@ -61,8 +59,6 @@ def get_quant_config(args):
         v_group_size=args.v_group_size,
         ############### Weight Quantization Arguments ###############
         awq_model_path_lp=args.awq_model_path_lp,
-        apply_w_disag=args.apply_w_disag,
-        awq_model_path_hp=args.awq_model_path_hp,
         ############### KV-cache Quantization Arguments ###############
         kv_quant_method=args.kv_quant_method,
         kv_residual_len=args.kv_residual_len,
@@ -143,17 +139,6 @@ def load_model_and_tokenizer(model_name, quant_config=None, device_map="cuda:0",
                     quant_config=quant_config,
                     local_files_only=True
                 )
-                if quant_config.apply_w_disag:
-                    model_prefill = QuantLlamaForCausalLM.from_pretrained(
-                        quant_config.awq_model_path_hp,
-                        config=config,
-                        torch_dtype=torch.float16,
-                        device_map="cuda:1",
-                        quant_config=quant_config,
-                        local_files_only=True
-                    )
-                    model_prefill.eval()
-                    model.set_model_prefill(model_prefill.model, model_prefill.lm_head)
     elif 'mistral' in model_path_fp16.lower():
         config = MistralConfig.from_pretrained(model_path_fp16)
         config.use_slow_attn = use_slow_attn
@@ -185,17 +170,6 @@ def load_model_and_tokenizer(model_name, quant_config=None, device_map="cuda:0",
                     quant_config=quant_config,
                     local_files_only=True
                 )
-                if quant_config.apply_w_disag:
-                    model_prefill = QuantMistralForCausalLM.from_pretrained(
-                        quant_config.awq_model_path_hp,
-                        config=config,
-                        torch_dtype=torch.float16,
-                        device_map="cuda:1",
-                        quant_config=quant_config,
-                        local_files_only=True
-                    )
-                    model_prefill.eval()
-                    model.set_model_prefill(model_prefill.model, model_prefill.lm_head)
     else:
         model = AutoModelForCausalLM.from_pretrained(
             model_path_fp16,

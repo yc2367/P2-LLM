@@ -259,15 +259,15 @@ class QuantLlamaAttention(nn.Module):
                     key_states_quant = None
                     key_states_float = key_states
                 else:
-                    key_states_quant = key_states[:, :, :-self.kv_residual_len:, :]
-                    key_states_float = key_states[:, :, -self.kv_residual_len::, :]
+                    key_states_quant = key_states[:, :, :-self.kv_residual_len, :]
+                    key_states_float = key_states[:, :, -self.kv_residual_len:, :]
                 
                 if value_states.shape[-2] <= self.kv_residual_len:
                     value_states_quant = None
                     value_states_float = value_states
                 else:
-                    value_states_quant = value_states[:, :, :-self.kv_residual_len:, :]
-                    value_states_float = value_states[:, :, -self.kv_residual_len::, :]
+                    value_states_quant = value_states[:, :, :-self.kv_residual_len, :]
+                    value_states_float = value_states[:, :, -self.kv_residual_len:, :]
 
                 ####################################### Quantize KV-cache ######################################
                 if (key_states_quant is not None) and (value_states_quant is not None):
@@ -337,7 +337,7 @@ class QuantLlamaAttention(nn.Module):
 
                 ############################## Prepare Quantized and Float KV-cache ##############################
                 key_states_quant = past_key_value[0] # quantized key
-                key_states_quant = past_key_value[1] # full-precision residual key
+                key_states_float = past_key_value[1] # full-precision residual key
                 value_states_quant_int = past_key_value[2] # quantized value integer
                 value_states_quant_scale = past_key_value[3] # quantized value scale
                 value_states_float = past_key_value[4] # full-precision residual value
@@ -455,15 +455,15 @@ class QuantLlamaAttention(nn.Module):
                     key_states_quant = None
                     key_states_float = key_states
                 else:
-                    key_states_quant = key_states[:, :, :-self.kv_residual_len:, :]
-                    key_states_float = key_states[:, :, -self.kv_residual_len::, :]
+                    key_states_quant = key_states[:, :, :-self.kv_residual_len, :]
+                    key_states_float = key_states[:, :, -self.kv_residual_len:, :]
                 
                 if value_states.shape[-2] <= self.kv_residual_len:
                     value_states_quant = None
                     value_states_float = value_states
                 else:
-                    value_states_quant = value_states[:, :, :-self.kv_residual_len:, :]
-                    value_states_float = value_states[:, :, -self.kv_residual_len::, :]
+                    value_states_quant = value_states[:, :, :-self.kv_residual_len, :]
+                    value_states_float = value_states[:, :, -self.kv_residual_len:, :]
                 
                 ############################################ Q x K.T ############################################
                 cos_q, sin_q, cos_k, sin_k = self.rotary_emb_post_quant(key_states, position_ids, position_ids_cache)
@@ -561,7 +561,7 @@ class QuantLlamaAttention(nn.Module):
 
                 ############################## Prepare Quantized and Float KV-cache ##############################
                 key_states_quant = past_key_value[0] # quantized key
-                key_states_quant = past_key_value[1] # full-precision residual key
+                key_states_float = past_key_value[1] # full-precision residual key
                 value_states_quant_int = past_key_value[2] # quantized value integer
                 value_states_quant_scale = past_key_value[3] # quantized value scale
                 value_states_float = past_key_value[4] # full-precision residual value
@@ -956,17 +956,6 @@ class QuantLlamaForCausalLM(LlamaPreTrainedModel):
         # Initialize weights and apply final processing
         self.post_init()
 
-        #NOTE (Yuzong): Initialize model_prefill
-        self.apply_w_disag = quant_config.apply_w_disag
-        self.model_prefill = self.model
-        self.lm_head_prefill = self.lm_head
-        self.kv_cache_transfered = False
-
-    #NOTE (Yuzong): set model_prefill
-    def set_model_prefill(self, model_prefill, lm_head_prefill):
-        self.model_prefill = model_prefill
-        self.lm_head_prefill = lm_head_prefill
-
     def get_input_embeddings(self):
         return self.model.embed_tokens
 
@@ -1031,71 +1020,25 @@ class QuantLlamaForCausalLM(LlamaPreTrainedModel):
         )
         return_dict = return_dict if return_dict is not None else self.config.use_return_dict
 
-        #NOTE (Yuzong): Prefill-Decode Disaggregation
-        if past_key_values is None:  # prefill
-            #NOTE (Yuzong): If applying model disaggregation, move tensors to the correct device
-            if self.apply_w_disag:
-                input_ids      = input_ids.to(self.model_prefill.device)
-                attention_mask = attention_mask.to(self.model_prefill.device)
-                position_ids   = position_ids.to(self.model_prefill.device)
-                inputs_embeds  = inputs_embeds.to(self.model_prefill.device) if torch.is_tensor(inputs_embeds) else None
-                self.kv_cache_transfered = False
-            
-            outputs = self.model_prefill(
-                input_ids=input_ids,
-                attention_mask=attention_mask,
-                position_ids=position_ids,
-                past_key_values=past_key_values,
-                inputs_embeds=inputs_embeds,
-                use_cache=use_cache,
-                output_attentions=output_attentions,
-                output_hidden_states=output_hidden_states,
-                return_dict=return_dict,
-            )
+        outputs = self.model(
+            input_ids=input_ids,
+            attention_mask=attention_mask,
+            position_ids=position_ids,
+            past_key_values=past_key_values,
+            inputs_embeds=inputs_embeds,
+            use_cache=use_cache,
+            output_attentions=output_attentions,
+            output_hidden_states=output_hidden_states,
+            return_dict=return_dict,
+        )
 
-            hidden_states = outputs[0]
-            if self.config.pretraining_tp > 1:
-                lm_head_slices = self.lm_head_prefill.weight.split(self.vocab_size // self.config.pretraining_tp, dim=0)
-                logits = [F.linear(hidden_states, lm_head_slices[i]) for i in range(self.config.pretraining_tp)]
-                logits = torch.cat(logits, dim=-1)
-            else:
-                logits = self.lm_head_prefill(hidden_states)
-            
-            #NOTE (Yuzong): If applying model disaggregation, move tensors to the correct device
-            if self.apply_w_disag:
-                logits = logits.to(self.model.device)
-        
-        else:  # decode 
-            #NOTE (Yuzong): If applying model disaggregation, move tensors to the correct device
-            if self.apply_w_disag and (not self.kv_cache_transfered):
-                past_key_values_new = ()
-                for layer_idx, past_key_value in enumerate(past_key_values):
-                    past_key_value_new = ()
-                    for cache_item in past_key_value:
-                        past_key_value_new += (cache_item.to(self.model.device) if torch.is_tensor(cache_item) else cache_item, )
-                    past_key_values_new += (past_key_value_new,)
-                past_key_values = past_key_values_new
-                self.kv_cache_transfered = True
-            
-            outputs = self.model(
-                input_ids=input_ids,
-                attention_mask=attention_mask,
-                position_ids=position_ids,
-                past_key_values=past_key_values,
-                inputs_embeds=inputs_embeds,
-                use_cache=use_cache,
-                output_attentions=output_attentions,
-                output_hidden_states=output_hidden_states,
-                return_dict=return_dict,
-            )
-
-            hidden_states = outputs[0]
-            if self.config.pretraining_tp > 1:
-                lm_head_slices = self.lm_head.weight.split(self.vocab_size // self.config.pretraining_tp, dim=0)
-                logits = [F.linear(hidden_states, lm_head_slices[i]) for i in range(self.config.pretraining_tp)]
-                logits = torch.cat(logits, dim=-1)
-            else:
-                logits = self.lm_head(hidden_states)
+        hidden_states = outputs[0]
+        if self.config.pretraining_tp > 1:
+            lm_head_slices = self.lm_head.weight.split(self.vocab_size // self.config.pretraining_tp, dim=0)
+            logits = [F.linear(hidden_states, lm_head_slices[i]) for i in range(self.config.pretraining_tp)]
+            logits = torch.cat(logits, dim=-1)
+        else:
+            logits = self.lm_head(hidden_states)
         
         logits = logits.float()
 

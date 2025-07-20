@@ -58,14 +58,14 @@ do
                                             --tasks ${task_list} --batch_size ${batch_size} \
                                             --num_fewshot ${num_fewshot} --fewshot_as_multiturn --apply_chat_template \
                                             --output_dir ${OUTPUT_DIR} \
-                                            --kv_quant_method "KTVT" --kv_residual_len ${kv_residual_len} --kv_quant_post_attn \
+                                            --kv_quant_method "KTVT" --kv_residual_len ${kv_residual_len} \
                                             --k_bits 4 --v_bits 4 --k_group_size 128 --v_group_size 128 \
                                             
                                         python ${HOME_DIR}/run_lm_eval.py --model_name ${model_name} \
                                             --tasks ${task_list} --batch_size ${batch_size} \
                                             --num_fewshot ${num_fewshot} --fewshot_as_multiturn --apply_chat_template \
                                             --output_dir ${OUTPUT_DIR} \
-                                            --kv_quant_method "KTVT" --kv_residual_len ${kv_residual_len} --kv_quant_post_attn --apply_k_scale \
+                                            --kv_quant_method "KTVT" --kv_residual_len ${kv_residual_len} --apply_k_scale \
                                             --k_bits 4 --v_bits 4 --k_group_size 128 --v_group_size 128 \
                                         
                                         ####################  Weight INT6  ####################
@@ -73,7 +73,7 @@ do
                                             --tasks ${task_list} --batch_size ${batch_size} \
                                             --num_fewshot ${num_fewshot} --fewshot_as_multiturn --apply_chat_template \
                                             --output_dir ${OUTPUT_DIR} \
-                                            --kv_quant_method "KTVT" --kv_residual_len ${kv_residual_len} --kv_quant_post_attn \
+                                            --kv_quant_method "KTVT" --kv_residual_len ${kv_residual_len} \
                                             --k_bits 4 --v_bits 4 --k_group_size 128 --v_group_size 128 \
                                             --p_bits 8 --a_bits 8 \
                                             --w_bits 6 --w_group_size 128 \
@@ -83,7 +83,7 @@ do
                                             --tasks ${task_list} --batch_size ${batch_size} \
                                             --num_fewshot ${num_fewshot} --fewshot_as_multiturn --apply_chat_template \
                                             --output_dir ${OUTPUT_DIR} \
-                                            --kv_quant_method "KTVT" --kv_residual_len ${kv_residual_len} --kv_quant_post_attn --apply_k_scale \
+                                            --kv_quant_method "KTVT" --kv_residual_len ${kv_residual_len} --apply_k_scale \
                                             --k_bits 4 --v_bits 4 --k_group_size 128 --v_group_size 128 \
                                             --p_bits 8 --a_bits 8 \
                                             --w_bits 6 --w_group_size 128 \
@@ -94,32 +94,30 @@ do
                                             --tasks ${task_list} --batch_size ${batch_size} \
                                             --num_fewshot ${num_fewshot} --fewshot_as_multiturn --apply_chat_template \
                                             --output_dir ${OUTPUT_DIR} \
-                                            --w_bits 4 --w_group_size 128 \
-                                            --awq_model_path_lp ${AWQ_DIR}/${model_name}/w4-g128
+                                            --w_bits 4 --w_group_size ${w_group_size} \
+                                            --awq_model_path_lp ${AWQ_DIR}/${model_name}/w4-g${w_group_size}
                                         
                                         ####################  KTVT  ####################
                                         python ${HOME_DIR}/run_lm_eval.py --model_name ${model_name} \
                                             --tasks ${task_list} --batch_size ${batch_size} \
                                             --num_fewshot ${num_fewshot} --fewshot_as_multiturn --apply_chat_template \
                                             --output_dir ${OUTPUT_DIR} \
-                                            --kv_quant_method "KTVT" --kv_residual_len ${kv_residual_len} --kv_quant_post_attn \
+                                            --kv_quant_method "KTVT" --kv_residual_len ${kv_residual_len} \
                                             --k_bits ${k_bits} --v_bits ${v_bits} --k_group_size ${k_group_size} --v_group_size ${v_group_size} \
                                             --p_bits ${p_bits} \
                                             --w_bits ${w_bits} --w_group_size ${w_group_size} \
                                             --awq_model_path_lp ${AWQ_DIR}/${model_name}/w${w_bits}-g${w_group_size} \
-                                            --apply_w_disag --awq_model_path_hp ${AWQ_DIR}/${model_name}/w8-g256 \
                                             --a_bits ${a_bits} --a_group_size ${a_group_size}
                                         
                                         python ${HOME_DIR}/run_lm_eval.py --model_name ${model_name} \
                                             --tasks ${task_list} --batch_size ${batch_size} \
                                             --num_fewshot ${num_fewshot} --fewshot_as_multiturn --apply_chat_template \
                                             --output_dir ${OUTPUT_DIR} \
-                                            --kv_quant_method "KTVT" --kv_residual_len ${kv_residual_len} --kv_quant_post_attn --apply_k_scale \
+                                            --kv_quant_method "KTVT" --kv_residual_len ${kv_residual_len} --apply_k_scale \
                                             --k_bits ${k_bits} --v_bits ${v_bits} --k_group_size ${k_group_size} --v_group_size ${v_group_size} \
                                             --p_bits ${p_bits} \
                                             --w_bits ${w_bits} --w_group_size ${w_group_size} \
                                             --awq_model_path_lp ${AWQ_DIR}/${model_name}/w${w_bits}-g${w_group_size} \
-                                            --apply_w_disag --awq_model_path_hp ${AWQ_DIR}/${model_name}/w8-g256 \
                                             --a_bits ${a_bits} --a_group_size ${a_group_size}
                                     done
                                 done
