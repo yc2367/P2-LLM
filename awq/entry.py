@@ -50,8 +50,11 @@ parser.add_argument(
 # quantization config
 parser.add_argument("--w_bit", type=int, default=None)
 parser.add_argument("--q_group_size", type=int, default=-1)
-parser.add_argument("--no_zero_point", action="store_true", help="disable zero_point")
+############### NOTE (Yuzong): Add support for BitMoD data type and double quantization ###############
+parser.add_argument("--wq_dtype", type=str, default=None, help="weight quantization data type")
 parser.add_argument("--use_double_quant", action="store_true", help="apply double quantization to quantize scaling factors")
+#######################################################################################################
+parser.add_argument("--no_zero_point", action="store_true", help="disable zero_point")
 parser.add_argument("--q_backend", type=str, default="fake", choices=["fake", "real"])
 # save/load real quantized weights
 parser.add_argument("--dump_quant", type=str, default=None, help="save quantized model")
@@ -83,6 +86,7 @@ if args.auto_parallel:
 q_config = {
     "zero_point": not args.no_zero_point,  # by default True
     "q_group_size": args.q_group_size,  # whether to use group quantization
+    "wq_dtype": args.wq_dtype,  # quantization data type
     "use_double_quant": args.use_double_quant,  # whether to apply double quantization
 }
 print("Quantization config:", q_config)

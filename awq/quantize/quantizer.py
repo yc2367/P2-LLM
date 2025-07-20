@@ -7,6 +7,9 @@ from ..utils.module import set_op_by_name
 
 from transformers.models.bloom.modeling_bloom import BloomBlock
 
+#NOTE (Yuzong): add support for BitMoD
+from .auto_dtype import search_group_dtype
+
 EMBEDDING_KEYWORDS = ["embed"]
 LM_HEAD_KEYWORDS = ["lm_head", "embed_out", "output"]
 
@@ -59,52 +62,71 @@ def scale_activations(module):
 
 # core quantization method (simulated quantization)
 def pseudo_quantize_tensor(
-    w, n_bit=8, zero_point=True, q_group_size=-1, inplace=False, get_scale_zp=False, use_double_quant=False
+    w, n_bit=8, zero_point=True, q_group_size=-1, wq_dtype=None,
+    inplace=False, get_scale_zp=False, use_double_quant=False
 ):
     org_w_shape = w.shape
     if q_group_size > 0:
         assert org_w_shape[-1] % q_group_size == 0
         num_groups = org_w_shape[-1] // q_group_size
         w = w.reshape(-1, num_groups, q_group_size)
-    # assert w.dim() == 2
-    if not (n_bit == 8):
-        max_val = w.amax(dim=-1, keepdim=True)
-        min_val = w.amin(dim=-1, keepdim=True)
-        max_int = 2**n_bit - 1
-        min_int = 0
-        scales = (max_val - min_val).clamp(min=1e-5) / max_int
-        zeros = (-torch.round(min_val / scales)).clamp_(min_int, max_int)
-    else:  # we actually never used this
-        # assert min_val is None
-        max_val = w.abs().amax(dim=-1, keepdim=True)
-        max_val = max_val.clamp(min=1e-5)
-        max_int = 2 ** (n_bit - 1) - 1
-        min_int = -(2 ** (n_bit - 1))
-        scales = max_val / max_int
-        zeros = 0
     
-    #NOTE (Yuzong): double quantization for scaling factors
-    # By definition of quantization, the scaling factors are always > 0.
-    ###################  INT8 Scaling Factor Quantization  ##################
-    if use_double_quant:
-        scale_max = torch.amax(scales.abs(), dim=1, keepdim=True)
-        scale_qmax = 2**8 - 1
-        scale_double = (scale_max / scale_qmax).clamp_(min=1e-7)
-        scale_q = torch.round(scales / scale_double).clamp_(min=0, max=scale_qmax)
-        scales = (scale_q * scale_double).clamp_(min=1e-7)
+    if (wq_dtype is None) or ("int" in wq_dtype):
+        if zero_point:
+            max_val = w.amax(dim=-1, keepdim=True)
+            min_val = w.amin(dim=-1, keepdim=True)
+            max_int = 2**n_bit - 1
+            min_int = 0
+            scales = (max_val - min_val).clamp(min=1e-5) / max_int
+            zeros = (-torch.round(min_val / scales)).clamp_(min_int, max_int)
+        else:  # we actually never used this
+            # assert min_val is None
+            max_val = w.abs().amax(dim=-1, keepdim=True)
+            max_val = max_val.clamp(min=1e-5)
+            max_int = 2 ** (n_bit - 1) - 1
+            min_int = -(2 ** (n_bit - 1))
+            scales = max_val / max_int
+            zeros = 0
+    
+        #NOTE (Yuzong): double quantization for scaling factors
+        # By definition of quantization, the scaling factors are always > 0.
+        ###################  INT8 Scaling Factor Quantization  ##################
+        if use_double_quant:
+            scale_max = torch.amax(scales.abs(), dim=1, keepdim=True)
+            scale_qmax = 2**8 - 1
+            scale_double = (scale_max / scale_qmax).clamp_(min=1e-7)
+            scale_q = torch.round(scales / scale_double).clamp_(min=0, max=scale_qmax)
+            scales = (scale_q * scale_double).clamp_(min=1e-7)
+
+        if inplace:
+            (
+                (w.div_(scales).round_().add_(zeros)).clamp_(min_int, max_int).sub_(zeros)
+            ).mul_(scales)
+        else:
+            w = (
+                torch.clamp(torch.round(w / scales) + zeros, min_int, max_int) - zeros
+            ) * scales
+    elif ("bitmod" in wq_dtype.lower()):
+        w_q, scales = search_group_dtype(w, wq_bits=n_bit)
+        zeros = torch.zeros_like(scales, dtype=torch.float16, device=scales.device) 
+
+        #NOTE (Yuzong): double quantization for scaling factors
+        # By definition of quantization, the scaling factors are always > 0.
+        ###################  INT8 Scaling Factor Quantization  ##################
+        if use_double_quant:
+            scale_max = torch.amax(scales.abs(), dim=1, keepdim=True)
+            scale_qmax = 2**8 - 1
+            scale_double = (scale_max / scale_qmax).clamp_(min=1e-7)
+            scale_q = torch.round(scales / scale_double).clamp_(min=0, max=scale_qmax)
+            scales = (scale_q * scale_double).clamp_(min=1e-7)
+        
+        w = wq * scales
+    else:
+        raise ValueError(f"Unsupported data type: {wq_dtype}")
 
     assert torch.isnan(scales).sum() == 0
-
-    if inplace:
-        (
-            (w.div_(scales).round_().add_(zeros)).clamp_(min_int, max_int).sub_(zeros)
-        ).mul_(scales)
-    else:
-        w = (
-            torch.clamp(torch.round(w / scales) + zeros, min_int, max_int) - zeros
-        ) * scales
     assert torch.isnan(w).sum() == 0
-
+    
     w = w.reshape(org_w_shape)
 
     if get_scale_zp:
