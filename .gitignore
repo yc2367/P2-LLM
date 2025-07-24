@@ -200,3 +200,4 @@ data_cache/
 scripts/
 results*/
 *.png
+kv_profile/plot*/
