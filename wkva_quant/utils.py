@@ -130,7 +130,7 @@ def load_model_and_tokenizer(model_name, quant_config=None, device_map="cuda:0",
                     device_map=device_map,
                     quant_config=quant_config
                 )
-            elif quant_config.w_bits in [4, 6]:
+            else:
                 model = QuantLlamaForCausalLM.from_pretrained(
                     quant_config.awq_model_path_lp,
                     config=config,
@@ -161,7 +161,7 @@ def load_model_and_tokenizer(model_name, quant_config=None, device_map="cuda:0",
                     device_map=device_map,
                     quant_config=quant_config
                 )
-            elif quant_config.w_bits in [4, 6]:
+            else:
                 model = QuantMistralForCausalLM.from_pretrained(
                     quant_config.awq_model_path_lp,
                     config=config,

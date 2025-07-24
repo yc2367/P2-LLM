@@ -25,14 +25,14 @@ class QuantConfig(dict):
         apply_k_scale: bool=False,
     ):
         for nbits in [w_bits, k_bits, v_bits]:
-            assert (nbits is None) or (nbits in [3, 4, 6, 8, 16]), \
-                f'Invalid precision \"{nbits}\" provided for weight / KV-cache. Allowed precisions are {{3, 4, 6, 8, 16}}'
+            assert (nbits is None) or (nbits in [3, 4, 5, 6, 7, 8, 16]), \
+                f'Invalid precision \"{nbits}\" provided for weight / KV-cache. Allowed precisions are {{3, 4, 5, 6, 7, 8, 16}}'
         for nbits in [a_bits, q_bits]:
-            assert (nbits is None) or (nbits in [8, 16]), \
-                f'Invalid precision \"{nbits}\" provided for activation / query. Allowed precisions are {{8, 16}}'
+            assert (nbits is None) or (nbits in [4, 5, 6, 7, 8, 16]), \
+                f'Invalid precision \"{nbits}\" provided for activation / query. Allowed precisions are {{4, 5, 6, 7, 8, 16}}'
         for nbits in [p_bits]:
-            assert (nbits is None) or (nbits in [8, 12, 16]), \
-                f'Invalid precision \"{nbits}\" provided for attention-score. Allowed precisions are {{8, 12, 16}}'
+            assert (nbits is None) or (nbits in [4, 5, 6, 7, 8, 12, 16]), \
+                f'Invalid precision \"{nbits}\" provided for attention-score. Allowed precisions are {{4, 5, 6, 7, 8, 12, 16}}'
         
         if (w_bits == 4):
             assert awq_model_path_lp, \

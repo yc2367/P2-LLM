@@ -17,6 +17,40 @@ def a_quant_per_group(
     if q_bits >= 16:
         return x_fp
     
+    ########### TODO: Remove after profiling ###########
+    # batch, seq_len, h_dim = x_fp.shape
+    # if q_bits in [4]:
+    #     group_size = h_dim
+    # else:
+    #     group_size = h_dim
+
+    # num_groups = h_dim // group_size
+    # x_fp_new = x_fp.view(batch, seq_len, num_groups, group_size)
+
+    # if q_bits in [4,5,6,7]:
+    #     qmin = 0
+    #     qmax = 2**q_bits - 1
+    #     rmin = torch.amin(x_fp_new, dim=-1, keepdim=True)
+    #     rmax = torch.amax(x_fp_new, dim=-1, keepdim=True)
+    #     scale = (rmax - rmin) / (qmax - qmin)
+    #     scale = scale.clamp_(min=1e-6)
+    #     zeropoint = (torch.round(-rmin / scale)).clamp_(qmin, qmax)
+    #     x_q = torch.clamp(torch.round(x_fp_new / scale) + zeropoint, min=qmin, max=qmax)
+    #     x_q = x_q - zeropoint
+    #     x_dq = x_q * scale
+    # else:
+    #     rmax = torch.amax(x_fp_new.abs(), dim=-1, keepdim=True)
+    #     qmax = 2**(q_bits - 1) - 1
+    #     qmin = -qmax
+    #     scale = rmax / qmax
+    #     scale = scale.clamp_(min=1e-6)
+    #     x_q = torch.clamp(torch.round(x_fp_new / scale), min=qmin, max=qmax)
+    #     x_dq = x_q * scale
+    
+    # x_dq = x_dq.view(batch, seq_len, h_dim)
+    # return x_dq
+    #######################################################
+    
     batch, seq_len, h_dim = x_fp.shape
     if group_size <= 0:
         num_groups = 1
@@ -206,13 +240,28 @@ def p_quant_per_block(
     :param q_bits: quantization bit-width
     :param group_size: quantization group size
     """
-    assert q_bits in [8, 12, 16], \
-        f'Invalid precision \"{q_bits}\" provided for attention score. Allowed precisions are {{8, 12, 16}}'
+    # assert q_bits in [4, 6, 8, 12, 16], \
+    #     f'Invalid precision \"{q_bits}\" provided for attention score. Allowed precisions are {{4, 6, 8, 12, 16}}'
     
     x_fp = x_fp.to(torch.float16)
 
     if q_bits >= 16:
         return x_fp
+    
+    ########### TODO: Remove after profiling ###########
+    # if q_bits in [4, 5, 6, 7, 8]:
+    #     qmin = 0
+    #     qmax = 2**q_bits - 1
+    #     rmin = torch.amin(x_fp, dim=-1, keepdim=True)
+    #     rmax = torch.amax(x_fp, dim=-1, keepdim=True)
+    #     scale = (rmax - rmin) / (qmax - qmin)
+    #     scale = scale.clamp_(min=1e-6)
+    #     zeropoint = (torch.round(-rmin / scale)).clamp_(qmin, qmax)
+    #     x_q = torch.clamp(torch.round(x_fp / scale) + zeropoint, min=qmin, max=qmax)
+    #     x_q = x_q - zeropoint
+    #     x_dq = x_q * scale
+    #     return x_dq
+    #######################################################
     
     if q_bits == 12:
         x_fp_tmp = x_fp.view(torch.int16)

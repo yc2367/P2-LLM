@@ -201,3 +201,5 @@ scripts/
 output/
 results*/
 *.png
+model_shape_config/
+*.ipynb

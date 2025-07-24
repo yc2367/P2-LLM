@@ -4,11 +4,11 @@
 HOME_DIR="/home/yc2367/llm/P2-LLM/3rdparty/llm-awq"
 AWQ_DIR="/share/abdelfattah/temp_yc2367/awq_quant_model"
 
-model_name_list=("llama-7b" "llama-13b" "llama-2-7b" "llama-2-13b" "llama-3.1-8b" "llama-3.2-3b" "llama-3.1-8b-ins" "llama-3.2-3b-ins" "mistral-7b")
+model_name_list=("llama-7b" "llama-13b" "llama-2-7b" "llama-2-13b" "llama-3.2-3b" "llama-3.2-3b-ins" "mistral-7b-v1" "mistral-7b-v3" "llama-3.1-8b" "llama-3.1-8b-ins")
 
 wq_dtype="bitmod"
 w_bit_list=(4)
-group_size_list=(128 64)
+group_size_list=(128)
 
 
 for model_name in "${model_name_list[@]}"
@@ -37,9 +37,12 @@ do
     elif [[ ${model_name} == "llama-3.2-3b-ins" ]]
     then
         model_path="meta-llama/Llama-3.2-3B-Instruct"
-    elif [[ ${model_name} == "mistral-7b" ]]
+    elif [[ ${model_name} == "mistral-7b-v1" ]]
     then
         model_path="mistralai/Mistral-7B-v0.1"
+    elif [[ ${model_name} == "mistral-7b-v3" ]]
+    then
+        model_path="mistralai/Mistral-7B-v0.3"
     fi
 
     for w_bit in "${w_bit_list[@]}"
@@ -69,7 +72,7 @@ do
 
             cd ${HOME_DIR}
             python -m awq.entry --model_path ${model_path} \
-                --w_bit ${w_bit} --q_group_size ${group_size} \
+                --w_bit ${w_bit} --q_group_size ${group_size} --wq_dtype ${wq_dtype} \
                 --load_awq ${awq_cache_path} --use_double_quant \
                 --dump_fake ${fake_quant_save_path} \
                 --tasks "wikitext"
