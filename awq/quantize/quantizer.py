@@ -120,7 +120,7 @@ def pseudo_quantize_tensor(
             scale_q = torch.round(scales / scale_double).clamp_(min=0, max=scale_qmax)
             scales = (scale_q * scale_double).clamp_(min=1e-7)
         
-        w = wq * scales
+        w = w_q * scales
     else:
         raise ValueError(f"Unsupported data type: {wq_dtype}")
 

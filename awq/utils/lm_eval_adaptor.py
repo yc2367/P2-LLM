@@ -1,10 +1,10 @@
 import transformers
 import torch
-from lm_eval.base import BaseLM
+from lm_eval.api.model import LM
 import fnmatch
 
 
-class LMEvalAdaptor(BaseLM):
+class LMEvalAdaptor(LM):
     def __init__(self, model_name, model, tokenizer, batch_size=1, max_length=-1):
         super().__init__()
 
