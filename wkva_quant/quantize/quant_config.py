@@ -23,6 +23,7 @@ class QuantConfig(dict):
         kv_quant_post_attn: bool=False,  # If True, KV-cache will be quantized after self-attention
         apply_k_bias: bool=False,
         apply_k_scale: bool=False,
+        post_rope_k_quant: bool=False
     ):
         for nbits in [w_bits, k_bits, v_bits]:
             assert (nbits is None) or (nbits in [3, 4, 6, 8, 16]), \
@@ -70,6 +71,7 @@ class QuantConfig(dict):
         self.kv_residual_len = kv_residual_len
         self.apply_k_bias = apply_k_bias
         self.apply_k_scale = apply_k_scale
+        self.post_rope_k_quant = post_rope_k_quant
     
     def __repr__(self):
         return repr(self.__dict__)

@@ -7,7 +7,7 @@ AWQ_DIR="/share/abdelfattah/temp_yc2367/awq_quant_model"
 
 OUTPUT_DIR=${HOME_DIR}/results/gsm8k_cot
 
-model_list=("llama-3.2-3b-ins")
+model_list=("llama-3.2-3b-ins" "llama-3.1-8b-ins")
 task_list="gsm8k_cot_llama"
 num_fewshot=8
 batch_size=8

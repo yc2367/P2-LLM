@@ -38,8 +38,9 @@ def add_quant_args(parser):
     parser.add_argument("--kv_quant_method", type=str, default="KTVT", help="KV-cache quantization method: KCVT / KTVT.")
     parser.add_argument("--kv_residual_len", type=int, default=1, help="Residual length (number of tokens maintained in FP16) for KV-cache quantization.")
     parser.add_argument("--kv_quant_post_attn", action="store_true", default=False, help="Whether to apply KV-cache quantization before or after self-attention.")
-    parser.add_argument("--apply_k_bias", action="store_true", default=False, help="Whether to apply per-channel key scaling for KTVT quantization")
-    parser.add_argument("--apply_k_scale", action="store_true", default=False, help="Whether to apply per-channel key bias subtraction for KTVT quantizationT")
+    parser.add_argument("--apply_k_bias", action="store_true", default=False, help="Whether to apply per-channel key scaling for KTVT quantization.")
+    parser.add_argument("--apply_k_scale", action="store_true", default=False, help="Whether to apply per-channel key bias subtraction for KTVT quantization.")
+    parser.add_argument("--post_rope_k_quant", action="store_true", default=False, help="Whether to apply key quantization post RoPE.")
 
     return parser
     
@@ -65,6 +66,7 @@ def get_quant_config(args):
         kv_quant_post_attn=args.kv_quant_post_attn,
         apply_k_bias=args.apply_k_bias,
         apply_k_scale=args.apply_k_scale,
+        post_rope_k_quant=args.post_rope_k_quant
     )
     return quant_config
 
@@ -121,7 +123,11 @@ def load_model_and_tokenizer(model_name, quant_config=None, device_map="cuda:0",
                 device_map=device_map
             )
         else:
-            from models import QuantLlamaForCausalLM
+            if quant_config.post_rope_k_quant:
+                from models.qmodule_llama_post_rope import QuantLlamaForCausalLM
+            else:
+                from models.qmodule_llama_pre_rope import QuantLlamaForCausalLM
+
             if quant_config.w_bits >= 16:
                 model = QuantLlamaForCausalLM.from_pretrained(
                     model_path_fp16,
@@ -152,7 +158,11 @@ def load_model_and_tokenizer(model_name, quant_config=None, device_map="cuda:0",
                 device_map=device_map
             )
         else:
-            from models import QuantMistralForCausalLM
+            if quant_config.post_rope_k_quant:
+                from models.qmodule_mistral_post_rope import QuantMistralForCausalLM
+            else:
+                from models.qmodule_mistral_pre_rope import QuantMistralForCausalLM
+
             if quant_config.w_bits >= 16:
                 model = QuantMistralForCausalLM.from_pretrained(
                     model_path_fp16,
