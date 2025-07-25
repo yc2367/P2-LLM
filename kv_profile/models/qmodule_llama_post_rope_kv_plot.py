@@ -12,7 +12,7 @@ from quantize.quantizer import k_quant_function, v_quant_function, quant_matmul_
 import matplotlib.pyplot as plt
 from mpl_toolkits.mplot3d import Axes3D
 import numpy as np
-import os, time
+import os, time, warnings
 
 from typing import Optional, Tuple
 import logging
@@ -23,7 +23,7 @@ _CONFIG_FOR_DOC = "LlamaConfig"
 PLOT_KV_CACHE = True
 
 
-def plot_and_save_kv_head(kv_tensor, is_key: bool, head: int, is_pre_rope: bool):
+def plot_and_save_kv_head(kv_tensor, is_key: bool, head: int, is_pre_rope: bool, is_smoothed: bool=False):
     X = np.arange(0, kv_tensor.shape[1])
     Y = np.arange(0, kv_tensor.shape[0])
     X, Y = np.meshgrid(X, Y)
@@ -44,16 +44,29 @@ def plot_and_save_kv_head(kv_tensor, is_key: bool, head: int, is_pre_rope: bool)
         save_dir = os.path.join('/home/yc2367/llm/P2-LLM/kv_profile', 'plot_post_rope')
         
     os.makedirs(save_dir, exist_ok=True)
-    save_dir = os.path.join(save_dir, f'{name}_head_{head}.png')
-    fig.savefig(save_dir, bbox_inches = 'tight', format='png', dpi=200, pad_inches=0.1)
-    print(f'Saved {name} head-{head} to {save_dir}\n')
+    if is_smoothed:
+        fig_save_file = f'{name}_head_{head}_smoothed.png'
+    else:
+        fig_save_file = f'{name}_head_{head}.png'
+    fig_save_path = os.path.join(save_dir, fig_save_file)
+    fig.savefig(fig_save_path, bbox_inches = 'tight', format='png', dpi=200, pad_inches=0.1)
+    print(f'Saved figure {fig_save_file} to {fig_save_path}\n')
+
+    if is_smoothed:
+        tensor_save_file = f'{name}_head_{head}_smoothed.pt'
+    else:
+        tensor_save_file = f'{name}_head_{head}.pt'
+    tensor_save_path = os.path.join(save_dir, tensor_save_file)
+    torch.save(Z, tensor_save_path)
+    print(f'Saved tensor {tensor_save_file} to {tensor_save_path}\n')
+
 
 
 
 class QuantLlamaAttention(nn.Module):
     """Multi-headed attention from 'Attention Is All You Need' paper"""
 
-    def __init__(self, config: LlamaConfig, quant_config: QuantConfig):
+    def __init__(self, config: LlamaConfig, quant_config: QuantConfig, layer_idx):
         super().__init__()
         self.config = config
         self.attention_dropout = config.attention_dropout
@@ -65,6 +78,7 @@ class QuantLlamaAttention(nn.Module):
         self.max_position_embeddings = config.max_position_embeddings
         self.rope_theta = config.rope_theta
         self.is_causal = True
+        self.layer_idx = layer_idx
 
         # KV-cache quantization config
         self.quant_config = quant_config
@@ -131,11 +145,23 @@ class QuantLlamaAttention(nn.Module):
         key_states = key_states.view(bsz, q_len, self.num_key_value_heads, self.head_dim).transpose(1, 2)
         value_states = value_states.view(bsz, q_len, self.num_key_value_heads, self.head_dim).transpose(1, 2)
 
+        #################### Plot KV-cache #########################
         if PLOT_KV_CACHE and (past_key_value is None): # Prefill Stage
-            for head_num in range(0, self.num_key_value_heads, 4):
-                plot_and_save_kv_head(key_states[0, head_num], is_key=True, head=head_num, is_pre_rope=True)
-                plot_and_save_kv_head(value_states[0, head_num], is_key=False, head=head_num, is_pre_rope=True)
-        key_states_pre_rope = key_states.clone()
+            for head_num in range(self.num_key_value_heads):
+                tmp_key_states = key_states[0, head_num].clone()
+                tmp_value_states = value_states[0, head_num].clone()
+                if (self.num_key_value_heads > 8):
+                    if (self.layer_idx == 2) and (head_num == 8):
+                        plot_and_save_kv_head(tmp_key_states, is_key=True, head=head_num, is_pre_rope=True)
+                        plot_and_save_kv_head(tmp_value_states, is_key=False, head=head_num, is_pre_rope=True)
+                        tmp_k_scale = tmp_key_states.abs().amax(dim=-2, keepdim=True)
+                        tmp_key_states = tmp_key_states / tmp_k_scale
+                        plot_and_save_kv_head(tmp_key_states, is_key=True, head=head_num, is_pre_rope=True, is_smoothed=True)
+                else:
+                    if (self.layer_idx == 6) and (head_num == 4):
+                        plot_and_save_kv_head(tmp_key_states, is_key=True, head=head_num, is_pre_rope=True)
+                        plot_and_save_kv_head(tmp_value_states, is_key=False, head=head_num, is_pre_rope=True)
+        ############################################################
 
         # Update sequence length
         kv_seq_len = key_states.shape[-2]
@@ -146,13 +172,22 @@ class QuantLlamaAttention(nn.Module):
         cos, sin = self.rotary_emb(value_states, position_ids)
         query_states, key_states = apply_rotary_pos_emb(query_states, key_states, cos, sin, position_ids)
 
-        key_states_post_rope = key_states.clone()
-        print(f'error: {key_states_pre_rope.max()}   {key_states_post_rope.max()}')
-
+        #################### Plot KV-cache #########################
         if PLOT_KV_CACHE and (past_key_value is None): # Prefill Stage
-            for head_num in range(0, self.num_key_value_heads, 4):
-                plot_and_save_kv_head(key_states[0, head_num], is_key=True, head=head_num, is_pre_rope=False)
-            time.sleep(10)
+            for head_num in range(self.num_key_value_heads):
+                tmp_key_states = key_states[0, head_num].clone()
+                if (self.num_key_value_heads > 8):
+                    if (self.layer_idx == 2) and (head_num == 8):
+                        plot_and_save_kv_head(tmp_key_states, is_key=True, head=head_num, is_pre_rope=False)
+                        exit()
+                else:
+                    if (self.layer_idx == 6) and (head_num == 4):
+                        plot_and_save_kv_head(tmp_key_states, is_key=True, head=head_num, is_pre_rope=False)
+                        tmp_k_scale = key_states[0, head_num].abs().amax(dim=-2, keepdim=True)
+                        tmp_key_states = tmp_key_states / tmp_k_scale
+                        plot_and_save_kv_head(tmp_key_states, is_key=True, head=head_num, is_pre_rope=False, is_smoothed=True)
+                        exit()
+        ############################################################
 
         #NOTE: Added by (Yuzong Chen)
         if not self.kv_quant_post_attn:
@@ -527,13 +562,14 @@ class QuantLlamaAttention(nn.Module):
 
 
 class LlamaDecoderLayer(nn.Module):
-    def __init__(self, config: LlamaConfig, quant_config: QuantConfig):
+    def __init__(self, config: LlamaConfig, quant_config: QuantConfig, layer_idx: int):
         super().__init__()
         self.hidden_size = config.hidden_size
-        self.self_attn = QuantLlamaAttention(config=config, quant_config=quant_config)
+        self.self_attn = QuantLlamaAttention(config=config, quant_config=quant_config, layer_idx=layer_idx)
         self.mlp = LlamaMLP(config=config)
         self.input_layernorm = LlamaRMSNorm(config.hidden_size, eps=config.rms_norm_eps)
         self.post_attention_layernorm = LlamaRMSNorm(config.hidden_size, eps=config.rms_norm_eps)
+        self.layer_idx = layer_idx
 
     def forward(
         self,
@@ -610,7 +646,7 @@ class QuantLlamaModel(LlamaPreTrainedModel):
         self.vocab_size = config.vocab_size
 
         self.embed_tokens = nn.Embedding(config.vocab_size, config.hidden_size, self.padding_idx)
-        self.layers = nn.ModuleList([LlamaDecoderLayer(config, quant_config) for _ in range(config.num_hidden_layers)])
+        self.layers = nn.ModuleList([LlamaDecoderLayer(config, quant_config, layer_idx) for layer_idx in range(config.num_hidden_layers)])
 
         self._use_flash_attention_2 = config._attn_implementation == "flash_attention_2"
         self.norm = LlamaRMSNorm(config.hidden_size, eps=config.rms_norm_eps)

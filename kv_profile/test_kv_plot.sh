@@ -1,6 +1,6 @@
 #!/bin/bash
 
-model=("llama-2-7b")
+model="llama-3.1-8b"
 dataset_list="wikitext"
 
 
@@ -12,7 +12,7 @@ v_bits=16
 
 ####################  KTVT  ####################
 python ${HOME_DIR}/run_ppl.py --model_name ${model} \
-    --datasets ${dataset_list} --seq_len 2048 \
+    --datasets ${dataset_list} --seq_len 4096 \
     --k_bits ${k_bits} --v_bits ${v_bits} \
     --kv_quant_method "KTVT" \
     --output_dir ${HOME_DIR}/results/ppl/ 

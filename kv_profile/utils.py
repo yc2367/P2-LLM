@@ -157,7 +157,6 @@ def load_model_and_tokenizer(model_name_or_path, quant_config=None, device_map="
             model, max_memory if len(max_memory) > 0 else None
         )
     }
-    print(max_memory)
     device_map = infer_auto_device_map(
         model,
         no_split_module_classes=[
