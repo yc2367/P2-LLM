@@ -52,12 +52,12 @@ do
                                         awq_model_path_lp=${AWQ_DIR}/${model_name}/w${w_bits}-g${w_group_size}
                                     fi
                                     
-                                    rm /home/yc2367/llm/P2-LLM/data_cache/testloader_mistral_7b_c4_2048.cache
+                                    rm /home/yc2367/llm/P2-LLM/data_cache/testloader_mistral_7b_c4*
 
                                     ####################  All FP16  ####################
                                     python ${HOME_DIR}/run_ppl.py --model_name ${model_name} \
                                         --datasets ${dataset_list} --seq_len ${seq_len} \
-                                        --output_dir ${OUTPUT_DIR}
+                                        --output_dir ${OUTPUT_DIR} --use_fp16
                                     
                                     ####################  KTVT  ####################
                                     python ${HOME_DIR}/run_ppl.py --model_name ${model_name} \
