@@ -19,7 +19,7 @@ logger = logging.getLogger(__name__)
 
 _CONFIG_FOR_DOC = "LlamaConfig"
 
-PLOT_KV_CACHE = True
+PLOT_KV_CACHE = False
 
 
 def plot_and_save_kv_head(kv_tensor, is_key: bool, head: int, is_pre_rope: bool, is_smoothed: bool=False):
@@ -199,6 +199,21 @@ class QuantLlamaAttention(nn.Module):
                 elif self.apply_k_scale and self.apply_k_bias:
                     self.k_bias = key_states.mean(dim=2, keepdim=True)
                     self.k_scale = (key_states - self.k_bias).abs().amax(dim=2, keepdim=True).pow(0.6)
+                
+                tmp_k_scale = key_states.abs().amax(dim=2, keepdim=True)
+                print('Key Max:  ', torch.max(tmp_k_scale))
+                print('Key Min:  ', torch.min(tmp_k_scale))
+                query_quant = q_quant_per_head(query_states, 8, 128)
+                print('Query Max:  ', torch.max(query_states.abs()))
+                print('Query Min:  ', torch.min(query_states.abs()))
+                print(f"Query Error: {(query_quant - query_states).pow(2).mean()}")
+                tmp_k_scale = repeat_kv(tmp_k_scale, self.num_key_value_groups)
+                tmp_query_states = query_states * tmp_k_scale
+                tmp_query_quant = q_quant_per_head(tmp_query_states, 8, 128)
+                print('Rescaled Query Max:  ', torch.max(tmp_query_states.abs()))
+                print('Rescaled Query Min:  ', torch.min(tmp_query_states.abs()))
+                print(f"Rescaled Query Error: {(tmp_query_quant - tmp_query_states).pow(2).mean()}")
+                print('\n')
 
                 ######################### Divide KV-cache into Quantized and Float parts #########################
                 kv_states_float_len = key_states.shape[-2] % self.kv_residual_len
@@ -548,6 +563,9 @@ class QuantLlamaAttention(nn.Module):
             )
         attn_output = attn_output.transpose(1, 2).contiguous()
         attn_output = attn_output.reshape(bsz, q_len, self.hidden_size)
+        #NOTE (Yuzong): activation quantization
+        attn_output_quant = a_quant_per_group(attn_output, 8, -1)
+        print(f'Hidden Activation Error: {(attn_output_quant - attn_output).pow(2).mean()}')
 
         if self.config.pretraining_tp > 1:
             attn_output = attn_output.split(self.hidden_size // self.config.pretraining_tp, dim=2)
@@ -565,7 +583,7 @@ class LlamaDecoderLayer(nn.Module):
         super().__init__()
         self.hidden_size = config.hidden_size
         self.self_attn = QuantLlamaAttention(config=config, quant_config=quant_config, layer_idx=layer_idx)
-        self.mlp = LlamaMLP(config=config)
+        self.mlp = QuantLlamaMLP(config=config, quant_config=quant_config)
         self.input_layernorm = LlamaRMSNorm(config.hidden_size, eps=config.rms_norm_eps)
         self.post_attention_layernorm = LlamaRMSNorm(config.hidden_size, eps=config.rms_norm_eps)
         self.layer_idx = layer_idx
@@ -629,6 +647,33 @@ class LlamaDecoderLayer(nn.Module):
             outputs += (present_key_value,)
 
         return outputs
+
+
+class QuantLlamaMLP(nn.Module):
+    def __init__(self, config, quant_config):
+        super().__init__()
+        self.config = config
+        self.hidden_size = config.hidden_size
+        self.intermediate_size = config.intermediate_size
+        self.gate_proj = nn.Linear(self.hidden_size, self.intermediate_size, bias=config.mlp_bias)
+        self.up_proj = nn.Linear(self.hidden_size, self.intermediate_size, bias=config.mlp_bias)
+        self.down_proj = nn.Linear(self.intermediate_size, self.hidden_size, bias=config.mlp_bias)
+        self.act_fn = ACT2FN[config.hidden_act]
+
+        #NOTE (Yuzong): quantization config
+        self.quant_config = quant_config
+
+    def forward(self, hidden_states):
+        #NOTE (Yuzong): activation quantization
+        hidden_states_quant = a_quant_per_group(hidden_states, 8, -1)
+
+        intermediate_states = self.act_fn(self.gate_proj(hidden_states_quant)) * self.up_proj(hidden_states_quant)
+        #NOTE (Yuzong): activation quantization
+        intermediate_states_quant = a_quant_per_group(intermediate_states, 8, -1)
+        print(f'Hidden Activation Error: {(intermediate_states_quant - intermediate_states).pow(2).mean()}')
+        down_proj = self.down_proj(intermediate_states_quant)
+
+        return down_proj
     
 
 class QuantLlamaModel(LlamaPreTrainedModel):
@@ -711,6 +756,7 @@ class QuantLlamaModel(LlamaPreTrainedModel):
             attention_mask = _prepare_4d_causal_attention_mask(
                 attention_mask, (batch_size, seq_length), inputs_embeds, past_key_values_length
             )
+        #print(attention_mask.shape, '\n\n\n\n')
 
         # embed positions
         hidden_states = inputs_embeds

@@ -1,6 +1,121 @@
 import torch
 from typing import Optional
-torch.set_printoptions(precision=10)
+
+
+@torch.no_grad()
+def a_quant_per_group(
+    x_fp: torch.Tensor, q_bits: int=8, group_size: int=-1
+):
+    """
+    Symmetric per-group activation quantization.
+
+    :param x_fp: input tensor to be quantized
+    :param q_bits: quantization bit-width
+    :param group_size: quantization group size
+    """
+    if q_bits >= 16:
+        return x_fp
+    
+    batch, seq_len, h_dim = x_fp.shape
+    if group_size <= 0:
+        num_groups = 1
+        group_size = h_dim
+    else:
+        num_groups = h_dim // group_size
+        assert num_groups * group_size == h_dim, \
+            f"The input tensor's last dimension {x_fp.shape[-1]} is not divisible by group_size {group_size}"
+    x_fp_new = x_fp.view(batch, seq_len, num_groups, group_size)
+
+    # ############### INT8 Quantization ###############
+    # qmax = 127
+    # rmax = torch.amax(x_fp_new.abs(), dim=-1, keepdim=True)
+    # rmax = rmax.clamp(min=1e-5)
+    # scale = (rmax / qmax).clamp_(min=1e-6)
+
+    # x_q  = torch.clamp(torch.round(x_fp_new / scale), min=-qmax, max=qmax)
+    # x_dq = x_q * scale
+    # x_dq = x_dq.view(batch, seq_len, h_dim)
+
+    # return x_dq
+
+    ############### FP8-E4M3 Quantization ###############
+    qmax = 448
+    rmax = torch.amax(x_fp_new.abs(), dim=-1, keepdim=True)
+    scale = rmax / qmax
+    scale = scale.clamp_(min=1e-6)
+    x_scaled = (x_fp_new / scale).abs()
+
+    x_dq_sign = torch.sign(x_fp_new)
+    x_dq_exp  = (x_scaled + (x_scaled == 0).type(x_scaled.dtype)).log2().floor().clamp_(min=-6)
+    x_dq_man  = torch.round(x_scaled / 2**x_dq_exp * 2**3) / 2**3
+
+    x_dq = x_dq_sign * 2**x_dq_exp * x_dq_man * scale
+    x_dq = x_dq.view(batch, seq_len, h_dim)
+
+    return x_dq
+
+
+@torch.no_grad()
+def q_quant_per_head(
+    x_fp: torch.Tensor, q_bits: int=8, group_size: int=-1
+):
+    """
+    Symmetric per-group activation quantization.
+
+    :param x_fp: input tensor to be quantized
+    :param q_bits: quantization bit-width
+    :param group_size: quantization group size
+    """
+    if q_bits >= 16:
+        return x_fp
+    
+    batch, num_head, seq_len, h_dim = x_fp.shape
+    x_fp_new = x_fp.transpose(1, 2).view(batch, seq_len, -1)
+    # x_fp_new = x_fp
+
+    # ############### INT8 Quantization ###############
+    # qmax = 127
+    # rmax = torch.amax(x_fp_new.abs(), dim=-1, keepdim=True)
+    # rmax = rmax.clamp(min=1e-5)
+    # scale = (rmax / qmax).clamp_(min=1e-6)
+
+    # x_q  = torch.clamp(torch.round(x_fp_new / scale), min=-qmax, max=qmax)
+    # x_dq = x_q * scale
+
+    # x_dq = x_dq.view(batch, seq_len, num_head, h_dim).transpose(1, 2)
+
+    # return x_dq
+
+    ############### FP8-E3M4 Quantization ###############
+    # qmax = 30
+    # rmax = torch.amax(x_fp_new.abs(), dim=-1, keepdim=True)
+    # scale = rmax / qmax
+    # scale = scale.clamp_(min=1e-6)
+    # x_scaled = (x_fp_new / scale).abs()
+
+    # x_dq_sign = torch.sign(x_fp_new)
+    # x_dq_exp  = (x_scaled + (x_scaled == 0).type(x_scaled.dtype)).log2().floor().clamp_(min=-2)
+    # x_dq_man  = torch.round(x_scaled / 2**x_dq_exp * 2**4) / 2**4
+
+    # x_dq = x_dq_sign * 2**x_dq_exp * x_dq_man * scale
+    # return x_dq
+
+    ############### FP8-E4M3 Quantization ###############
+    qmax = 508
+    rmax = torch.amax(x_fp_new.abs(), dim=-1, keepdim=True)
+    scale = rmax / qmax
+    scale = scale.clamp_(min=1e-6)
+    x_scaled = (x_fp_new / scale).abs()
+
+    x_dq_sign = torch.sign(x_fp_new)
+    x_dq_exp  = (x_scaled + (x_scaled == 0).type(x_scaled.dtype)).log2().floor().clamp_(min=-6)
+    x_dq_man  = torch.round(x_scaled / 2**x_dq_exp * 2**7) / 2**7
+
+    x_dq = x_dq_sign * 2**x_dq_exp * x_dq_man * scale
+
+    x_dq = x_dq.view(batch, seq_len, num_head, h_dim).transpose(1, 2)
+
+    return x_dq
 
 
 @torch.no_grad()

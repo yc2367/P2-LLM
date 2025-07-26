@@ -8,7 +8,7 @@ AWQ_DIR="/share/abdelfattah/temp_yc2367/awq_quant_model"
 seq_len=4096
 OUTPUT_DIR=${HOME_DIR}/results/ppl_pre_rope_quant_${seq_len}
 
-model_list=("llama-3.1-8b" "llama-3.2-3b" "mistral-7b-v1" "mistral-7b-v3" "llama-7b" "llama-13b" "llama-2-7b" "llama-2-13b")
+model_list=("mistral-7b-v1" "mistral-7b-v3" "llama-3.1-8b" "llama-3.2-3b" "llama-2-7b" "llama-2-13b")
 
 dataset_list="wikitext,c4"
 
@@ -55,9 +55,9 @@ do
                                     rm /home/yc2367/llm/P2-LLM/data_cache/testloader_mistral_7b_c4*
 
                                     ####################  All FP16  ####################
-                                    python ${HOME_DIR}/run_ppl.py --model_name ${model_name} \
-                                        --datasets ${dataset_list} --seq_len ${seq_len} \
-                                        --output_dir ${OUTPUT_DIR} --use_fp16
+                                    # python ${HOME_DIR}/run_ppl.py --model_name ${model_name} \
+                                    #     --datasets ${dataset_list} --seq_len ${seq_len} \
+                                    #     --output_dir ${OUTPUT_DIR} --use_fp16
                                     
                                     ####################  KTVT  ####################
                                     python ${HOME_DIR}/run_ppl.py --model_name ${model_name} \

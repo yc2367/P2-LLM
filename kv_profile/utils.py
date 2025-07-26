@@ -3,11 +3,11 @@ import importlib
 import numpy as np
 import random, torch
 from functools import reduce
-from transformers import AutoTokenizer, AutoModelForCausalLM, AutoConfig, LlamaConfig
+from transformers import AutoTokenizer, AutoModelForCausalLM, LlamaConfig, MistralConfig
 from accelerate import infer_auto_device_map, dispatch_model
 from accelerate.utils.modeling import get_balanced_memory
 
-from models import QuantLlamaForCausalLM
+from models import QuantLlamaForCausalLM, QuantMistralForCausalLM
 from quantize import QuantConfig
 
 import json
@@ -134,6 +134,25 @@ def load_model_and_tokenizer(model_name_or_path, quant_config=None, device_map="
         else:
             config.use_slow_attn = use_slow_attn
             model = QuantLlamaForCausalLM.from_pretrained(
+                model_name_or_path,
+                config=config,
+                torch_dtype=torch.float16,
+                low_cpu_mem_usage=True,
+                quant_config=quant_config
+            )
+    elif 'mistral' in model_name_or_path.lower():
+        config = MistralConfig.from_pretrained(model_name_or_path)
+        if use_fp16:
+            from transformers import MistralForCausalLM
+            model = MistralForCausalLM.from_pretrained(
+                model_name_or_path,
+                config=config,
+                torch_dtype=torch.float16,
+                low_cpu_mem_usage=True
+            )
+        else:
+            config.use_slow_attn = use_slow_attn
+            model = QuantMistralForCausalLM.from_pretrained(
                 model_name_or_path,
                 config=config,
                 torch_dtype=torch.float16,
