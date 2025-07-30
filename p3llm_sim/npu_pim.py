@@ -3,9 +3,10 @@ from typing import List
 from mem.mem_instance import MemoryInstance
 
 from systolic_array import SystolicArray
+from npu import NPU
 
 
-class NPU(SystolicArray):
+class NPU_PIM(SystolicArray):
     def __init__(
         self, 
         model_name: str,

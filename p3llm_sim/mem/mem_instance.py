@@ -21,47 +21,75 @@ class MemoryInstance:
         latency: float = 1,
         min_r_granularity=None,
         min_w_granularity=None,
-        get_cost_from_cacti: bool = True,
+        get_cost_from_cacti: bool=True,
+        is_dram: bool=False
     ):
-        if get_cost_from_cacti:
-            # Size must be a multiple of 8 when using CACTI
-            assert (
-                mem_config['size'] % 8 == 0
-            ), "Memory size must be a multiple of 8 when automatically extracting costs using CACTI."
+        if not is_dram:
+            if get_cost_from_cacti:
+                # Size must be a multiple of 8 when using CACTI
+                assert (
+                    mem_config['size'] % 8 == 0
+                ), "Memory size must be a multiple of 8 when automatically extracting costs using CACTI."
 
-            cacti_simulation = CactiSimulation(mem_config)
-            mem_config = cacti_simulation.run_cacti()
+                cacti_simulation = CactiSimulation(mem_config)
+                mem_config = cacti_simulation.run_cacti()
 
-            self.r_cost = mem_config['r_cost']
-            self.w_cost = mem_config['w_cost']
-            self.area = mem_config['area']
-            self.latency = round(mem_config['latency'], 3)
+                self.r_cost = mem_config['r_cost']
+                self.w_cost = mem_config['w_cost']
+                self.area = mem_config['area']
+                self.latency = round(mem_config['latency'], 3)
+            else:
+                self.r_cost = r_cost
+                self.w_cost = w_cost
+                self.area = 0
+                self.latency = latency
+
+            self.size = mem_config['size']
+            self.bank = mem_config['bank_count']
+            self.rw_bw = mem_config['rw_bw']
+            self.r_port = mem_config['r_port']
+            self.w_port = mem_config['w_port']
+            self.rw_port = mem_config['rw_port']
+
+            if not min_r_granularity:
+                self.r_bw_min = mem_config['rw_bw']
+                self.r_cost_min = self.r_cost
+            else:
+                self.r_bw_min = min_r_granularity
+                self.r_cost_min = self.r_cost / (self.rw_bw / self.r_bw_min)
+
+            if not min_w_granularity:
+                self.w_bw_min = mem_config['rw_bw']
+                self.w_cost_min = self.w_cost
+            else:
+                self.w_bw_min = min_w_granularity
+                self.w_cost_min = self.w_cost / (self.rw_bw / self.w_bw_min)
         else:
             self.r_cost = r_cost
             self.w_cost = w_cost
             self.area = 0
             self.latency = latency
 
-        self.size = mem_config['size']
-        self.bank = mem_config['bank_count']
-        self.rw_bw = mem_config['rw_bw']
-        self.r_port = mem_config['r_port']
-        self.w_port = mem_config['w_port']
-        self.rw_port = mem_config['rw_port']
+            self.size = mem_config['size']
+            self.bank = mem_config['num_channel'] * mem_config['num_bank_group_per_channel'] * mem_config['num_bank_per_group']
+            self.rw_bw = mem_config['rw_bw']
+            self.r_port = mem_config['r_port']
+            self.w_port = mem_config['w_port']
+            self.rw_port = mem_config['rw_port']
 
-        if not min_r_granularity:
-            self.r_bw_min = mem_config['rw_bw']
-            self.r_cost_min = self.r_cost
-        else:
-            self.r_bw_min = min_r_granularity
-            self.r_cost_min = self.r_cost / (self.rw_bw / self.r_bw_min)
+            if not min_r_granularity:
+                self.r_bw_min = mem_config['rw_bw']
+                self.r_cost_min = self.r_cost
+            else:
+                self.r_bw_min = min_r_granularity
+                self.r_cost_min = self.r_cost / (self.rw_bw / self.r_bw_min)
 
-        if not min_w_granularity:
-            self.w_bw_min = mem_config['rw_bw']
-            self.w_cost_min = self.w_cost
-        else:
-            self.w_bw_min = min_w_granularity
-            self.w_cost_min = self.w_cost / (self.rw_bw / self.w_bw_min)
+            if not min_w_granularity:
+                self.w_bw_min = mem_config['rw_bw']
+                self.w_cost_min = self.w_cost
+            else:
+                self.w_bw_min = min_w_granularity
+                self.w_cost_min = self.w_cost / (self.rw_bw / self.w_bw_min)
     
     def get_cacti_cost(self):
         cost = {}
