@@ -101,7 +101,7 @@ def q_quant_per_head(
     # return x_dq
 
     ############### FP8-E4M3 Quantization ###############
-    qmax = 508
+    qmax = 448
     rmax = torch.amax(x_fp_new.abs(), dim=-1, keepdim=True)
     scale = rmax / qmax
     scale = scale.clamp_(min=1e-6)
@@ -109,7 +109,7 @@ def q_quant_per_head(
 
     x_dq_sign = torch.sign(x_fp_new)
     x_dq_exp  = (x_scaled + (x_scaled == 0).type(x_scaled.dtype)).log2().floor().clamp_(min=-6)
-    x_dq_man  = torch.round(x_scaled / 2**x_dq_exp * 2**7) / 2**7
+    x_dq_man  = torch.round(x_scaled / 2**x_dq_exp * 2**3) / 2**3
 
     x_dq = x_dq_sign * 2**x_dq_exp * x_dq_man * scale
 
