@@ -1,32 +1,39 @@
 import math
 from typing import List
-from mem.mem_instance import MemoryInstance
 
-from systolic_array import SystolicArray
+from mem import MemoryInstance
+from .systolic_array import SystolicArray
 
 
 class NPU(SystolicArray):
+    POWER_GATING_RATIO = 4
+
     def __init__(
         self, 
         model_name: str,
         batch_size: int=1,
+        cxt_len: int=4096,
+        is_prefill: bool=True,
+
         w_prec: int=16, 
         a_prec: int=16, 
         q_prec: int=16,
         p_prec: int=16,
         kv_prec: int=16,
+
         num_npu_core: int=4,
         pe_dp_size: int=1,
         pe_energy: float=0, 
         pe_array_dim: List[int]=[],
+
         num_dram_channel: int=16,
-        cxt_len: int=4096,
-        is_prefill: bool=True,
         init_mem: bool=True,
     ): 
         super().__init__(
             model_name=model_name,
             batch_size=batch_size, 
+            cxt_len=cxt_len, 
+            is_prefill=is_prefill,
             w_prec=w_prec, 
             a_prec=a_prec,
             q_prec=q_prec,
@@ -36,10 +43,9 @@ class NPU(SystolicArray):
             pe_dp_size=pe_dp_size, 
             pe_energy=pe_energy, 
             pe_array_dim=pe_array_dim, 
-            cxt_len=cxt_len, 
-            is_prefill=is_prefill
         )
 
+        self.is_prefill = is_prefill 
         self.num_dram_channel = num_dram_channel
 
         self.cycle_compute = None
@@ -49,16 +55,20 @@ class NPU(SystolicArray):
             self._calc_num_mem_refetch()
 
     def calc_cycle(self):
+        self._layer_cycle_total = {}
+
         self._calc_compute_cycle()
         self._calc_dram_cycle() 
+        
         total_cycle = 0
         total_cycle_compute = 0
-        for name in self.layer_name_list:
-            cycle_layer_compute = self._layer_cycle_compute[name]
-            cycle_layer_dram    = self._layer_cycle_dram[name]
-            #print(f'layer name: {name}, compute: {cycle_layer_compute}, dram: {cycle_layer_dram}')
+        for layer_name in self.layer_name_list:
+            cycle_layer_compute = self._layer_cycle_compute[layer_name]
+            cycle_layer_dram    = self._layer_cycle_dram[layer_name]
             total_cycle_compute += cycle_layer_compute
             total_cycle += max(cycle_layer_compute, cycle_layer_dram)
+            self._layer_cycle_total[layer_name] = max(cycle_layer_compute, cycle_layer_dram)
+
         self.cycle_compute = total_cycle_compute
 
         total_cycle_compute_linear = 0
@@ -66,16 +76,18 @@ class NPU(SystolicArray):
         total_cycle_compute_attn = 0
         total_cycle_dram_attn = 0
 
-        for name in self.layer_name_list:
-            if ('attn_qk' in name) or ('attn_pv' in name):
-                total_cycle_compute_attn += self._layer_cycle_compute[name]
-                total_cycle_dram_attn += self._layer_cycle_dram[name]
+        for layer_name in self.layer_name_list:
+            if ('attn_qk' in layer_name) or ('attn_pv' in layer_name):
+                total_cycle_compute_attn += self._layer_cycle_compute[layer_name]
+                total_cycle_dram_attn += self._layer_cycle_dram[layer_name]
             else:
-                total_cycle_compute_linear += self._layer_cycle_compute[name]
-                total_cycle_dram_linear += self._layer_cycle_dram[name]
-        print(f'Linear Compute: {total_cycle_compute_linear}, Linear DRAM: {total_cycle_dram_linear}')
-        print(f'Attn Compute:   {total_cycle_compute_attn}, Attn DRAM:   {total_cycle_dram_attn}')
-        print('\n')
+                total_cycle_compute_linear += self._layer_cycle_compute[layer_name]
+                total_cycle_dram_linear += self._layer_cycle_dram[layer_name]
+                
+        #NOTE: Uncomment later.
+        # print(f'Linear Compute: {total_cycle_compute_linear}, Linear DRAM: {total_cycle_dram_linear}')
+        # print(f'Attn Compute:   {total_cycle_compute_attn}, Attn DRAM:   {total_cycle_dram_attn}')
+        # print('\n')
         
         return total_cycle_compute, total_cycle
     
@@ -113,6 +125,8 @@ class NPU(SystolicArray):
         tile_token = math.ceil(num_input / num_pe_col)
         total_tile = (tile_cin * tile_cout * tile_token) * batch_size
 
+        # print(w_dim, o_dim, total_tile)
+
         return total_tile
     
     def _calc_dram_cycle(self):
@@ -135,26 +149,45 @@ class NPU(SystolicArray):
     def calc_compute_energy(self):
         if self.cycle_compute is None:
             self.cycle_compute, _ = self.calc_cycle()
-        compute_energy = self.pe_energy * self.total_pe_num * self.cycle_compute
-        return compute_energy
+
+        self._layer_energy_compute = {}
+        compute_energy_per_cycle = self.pe_energy * self.pe_num_total
+        for layer_name in self.layer_name_list:
+            self._layer_energy_compute[layer_name] = self._layer_cycle_compute[layer_name] * compute_energy_per_cycle
+            if not self.is_prefill:  
+                # apply power gating to decoding stage, since GEMV severely under-utilizes the hardware
+                self._layer_energy_compute[layer_name] = self._layer_energy_compute[layer_name] / self.POWER_GATING_RATIO
+
+        compute_energy_total = compute_energy_per_cycle * self.cycle_compute
+        if not self.is_prefill:  
+            # apply power gating to decoding stage, since GEMV severely under-utilizes the hardware
+            compute_energy_total = compute_energy_total / self.POWER_GATING_RATIO
+
+        return compute_energy_total
     
     def calc_sram_rd_energy(self):
+        self._layer_energy_sram_rd = {}
+
         w_sram_rd_cost = self.w_sram.r_cost
         i_sram_rd_cost = self.i_sram.r_cost
 
-        total_tile = 0
+        total_energy = 0
         for layer_name in self.layer_name_list:
             w_dim = self.weight_dim[layer_name]
             o_dim = self.output_dim[layer_name]
-            total_tile += self._calc_tile_fc(w_dim, o_dim)
+            layer_energy = self._calc_tile_fc(w_dim, o_dim) * (w_sram_rd_cost + i_sram_rd_cost)
+            self._layer_energy_sram_rd[layer_name] = layer_energy
+            total_energy += layer_energy
 
-        sram_rd_energy = total_tile * (w_sram_rd_cost + i_sram_rd_cost)
-        return sram_rd_energy
+        return total_energy
     
     def calc_sram_wr_energy(self):
+        self._layer_energy_sram_wr = {}
         total_energy = 0
         for layer_name in self.layer_name_list:
-            total_energy += self._calc_sram_wr_energy_fc(layer_name)
+            layer_energy = self._calc_sram_wr_energy_fc(layer_name)
+            self._layer_energy_sram_wr[layer_name] = layer_energy
+            total_energy += layer_energy
         return total_energy
     
     def _calc_sram_wr_energy_fc(self, layer_name):
@@ -198,13 +231,18 @@ class NPU(SystolicArray):
         return total_energy
     
     def calc_dram_energy(self):
-        energy = 0
-        for name in self.layer_name_list:
-            energy += self._calc_dram_energy_fc(name)
-        return energy
+        self._layer_energy_dram = {}
+        total_energy = 0
+
+        for layer_name in self.layer_name_list:
+            layer_energy = self._calc_dram_energy_fc(layer_name)
+            self._layer_energy_dram[layer_name] = layer_energy
+            total_energy += layer_energy
+
+        return total_energy
     
     def _calc_dram_energy_fc(self, layer_name):
-        dram_bus_width_per_channel = self.dram.rw_bw / self.num_dram_channel / 2
+        dram_bus_width_per_channel = self.dram.rw_bw / self.num_dram_channel
         rd_cost = self.dram.r_cost
         wr_cost = self.dram.w_cost
         num_fetch_w, num_fetch_i = self._layer_mem_refetch[layer_name]

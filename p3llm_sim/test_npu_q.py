@@ -22,7 +22,7 @@ if __name__ == "__main__":
     assert batch_size > 0, "The input batch_size must be > 1"
     
     #################### Set PE array characteristic ####################
-    pe_energy    = 0.7
+    pe_energy    = 0.7 
     pe_array_dim = [128, 128]
     pe_dp_size   = 4
 
@@ -36,11 +36,11 @@ if __name__ == "__main__":
             batch_size=batch_size, 
             cxt_len=cxt_len, 
             is_prefill=is_prefill,
-            w_prec=16, 
-            a_prec=16,
+            w_prec=4, 
+            a_prec=8,
             q_prec=16,
             p_prec=16,
-            kv_prec=16, 
+            kv_prec=4, 
             num_npu_core=num_npu_core, 
             pe_dp_size=pe_dp_size, 
             pe_energy=pe_energy, 

@@ -11,6 +11,8 @@ class SystolicArray:
     ## The class constructor
     # @param model_name:    Name of the model to be evaluated.
     # @param batch_size:    Batch size.
+    # @param cxt_len:       Iput context length.
+    # @param is_prefill:    Whether the simulation mode is the prefill stage.
 
     # @param w_prec:        Weight precision.
     # @param a_prec:        Input activation precision.
@@ -21,23 +23,24 @@ class SystolicArray:
     # @param num_npu_core:  Number of NPU cores.
     # @param pe_dp_size:    Dot-product size of the PE.
     # @param pe_energy:     Energy cost of PE.
-    # @param cxt_len:       Iput context length.
-    # @param is_prefill:    Whether the simulation mode is the prefill stage.
+    
     def __init__(
         self,
         model_name: str,
         batch_size: int=1,
+        cxt_len: int=4096,
+        is_prefill: bool=False,
+
         w_prec: int=16, 
         a_prec: int=16, 
         q_prec: int=16,
         p_prec: int=16,
         kv_prec: int=16,
+
         num_npu_core: int=4,
         pe_dp_size: int=1,
         pe_energy: float=0, 
         pe_array_dim: List[int]=[],
-        cxt_len: int=4096,
-        is_prefill: bool=False,
     ):
         assert pe_energy >= 0, "ERROR! You must provide the energy cost of a PE."
         assert len(pe_array_dim) == 2, f"ERROR! The dimension of PE array must be 2. But you gave {len(pe_array_dim)}."
@@ -54,13 +57,13 @@ class SystolicArray:
 
         self.num_npu_core  = num_npu_core
         self.pe_dp_size    = pe_dp_size
-        self.total_pe_num  = np.prod(pe_array_dim)
+        self.pe_num_total  = np.prod(pe_array_dim)
         self.pe_energy     = pe_energy * self.PR_SCALING
         self.pe_array_dim  = {'h': pe_array_dim[0], 'w': pe_array_dim[1]}
         
         self._init_model_profiler(model_name, cxt_len, is_prefill)
     
-    def _init_model_profiler(self, model_name, cxt_len: int=2048, is_prefill: bool=False):
+    def _init_model_profiler(self, model_name, cxt_len: int=4096, is_prefill: bool=False):
         file_path = f'./model_shape_config/{MODEL_NAME_DICT[model_name]}.pickle'
         with open(file_path, 'rb') as f:
             model_config, layer_config = pickle.load(f)
@@ -88,28 +91,28 @@ class SystolicArray:
             num_key_value_heads = model_config['num_key_value_heads']
         else:
             num_key_value_heads = num_attention_heads
-        query_share_factor = num_attention_heads / num_key_value_heads
+        attn_group_size = num_attention_heads / num_key_value_heads
 
         for l_idx in range(num_hidden_layers):
             op_name = f'model.layers.{l_idx}.self_attn.attn_qk'
-            if is_prefill: # generation
+            if is_prefill:  # prefill
                 weight_dim[op_name] = [batch_size * num_key_value_heads, cxt_len, head_size] # key dimension
-                input_dim[op_name]  = [batch_size * num_key_value_heads, query_share_factor * cxt_len, head_size] # query dimension
-                output_dim[op_name] = [batch_size * num_key_value_heads, query_share_factor * cxt_len, cxt_len] # score dimension
-            else:
+                input_dim[op_name]  = [batch_size * num_key_value_heads, attn_group_size * cxt_len, head_size] # query dimension
+                output_dim[op_name] = [batch_size * num_key_value_heads, attn_group_size * cxt_len, cxt_len] # score dimension
+            else:  # generation
                 weight_dim[op_name] = [batch_size * num_key_value_heads, cxt_len, head_size] # key dimension
-                input_dim[op_name]  = [batch_size * num_key_value_heads, query_share_factor, head_size] # query dimension
-                output_dim[op_name] = [batch_size * num_key_value_heads, query_share_factor, cxt_len] # score dimension
+                input_dim[op_name]  = [batch_size * num_key_value_heads, attn_group_size, head_size] # query dimension
+                output_dim[op_name] = [batch_size * num_key_value_heads, attn_group_size, cxt_len] # score dimension
             
             op_name = f'model.layers.{l_idx}.self_attn.attn_pv'
-            if is_prefill: # generation
+            if is_prefill:  # prefill
                 weight_dim[op_name] = [batch_size * num_key_value_heads, head_size, cxt_len] # value dimension
-                input_dim[op_name]  = [batch_size * num_key_value_heads, query_share_factor * cxt_len, cxt_len] # score dimension
-                output_dim[op_name] = [batch_size * num_key_value_heads, query_share_factor * cxt_len, head_size] # output dimension
-            else:
+                input_dim[op_name]  = [batch_size * num_key_value_heads, attn_group_size * cxt_len, cxt_len] # score dimension
+                output_dim[op_name] = [batch_size * num_key_value_heads, attn_group_size * cxt_len, head_size] # output dimension
+            else:  # generation
                 weight_dim[op_name] = [batch_size * num_key_value_heads, head_size, cxt_len] # value dimension
-                input_dim[op_name]  = [batch_size * num_key_value_heads, query_share_factor, cxt_len] # score dimension
-                output_dim[op_name] = [batch_size * num_key_value_heads, query_share_factor, head_size] # output dimension
+                input_dim[op_name]  = [batch_size * num_key_value_heads, attn_group_size, cxt_len] # score dimension
+                output_dim[op_name] = [batch_size * num_key_value_heads, attn_group_size, head_size] # output dimension
 
         self.weight_dim = weight_dim
         self.input_dim  = input_dim
