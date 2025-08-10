@@ -6,8 +6,8 @@ from utils import MODEL_NAME_LIST
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
     parser.add_argument("--num_npu_core", type=int, default=4, help="Number of NPU cores")
-    parser.add_argument("--batch_size", type=int, default=1, help="Input batch size")
-    parser.add_argument("--cxt_len", type=int, default=16384, help="Input context length")
+    parser.add_argument("--batch_size", type=int, default=4, help="Input batch size")
+    parser.add_argument("--cxt_len", type=int, default=4096, help="Input context length")
 
     args = parser.parse_args()
     num_npu_core  = args.num_npu_core
@@ -39,8 +39,8 @@ if __name__ == "__main__":
             cxt_len=cxt_len, 
             w_prec=4, 
             a_prec=8,
-            q_prec=8,
-            p_prec=8,
+            q_prec=16,
+            p_prec=16,
             kv_prec=4, 
             num_channel=num_channel, 
             pcu_per_channel=pcu_per_channel, 
@@ -56,8 +56,8 @@ if __name__ == "__main__":
             is_prefill=False,
             w_prec=4, 
             a_prec=8,
-            q_prec=8,
-            p_prec=8,
+            q_prec=16,
+            p_prec=16,
             kv_prec=4, 
             num_npu_core=num_npu_core, 
             pe_dp_size=npu_pe_dp_size, 
@@ -84,14 +84,7 @@ if __name__ == "__main__":
 
         layer_name_list = npu.layer_name_list
         for layer_name in layer_name_list:
-            if ('attn_qk' in layer_name) and ('llama-2' in model_name.lower()):
-                #NOTE: "Q x K.T" for Llama-2 is performed on NPU
-                layer_cycle  = npu._layer_cycle_total[layer_name]
-                layer_energy = npu._layer_energy_compute[layer_name] + \
-                    npu._layer_energy_sram_rd[layer_name] + \
-                    npu._layer_energy_sram_wr[layer_name] + \
-                    npu._layer_energy_dram[layer_name]
-            elif (batch_size == 8) and ('attn_qk' not in layer_name) and ('attn_pv' not in layer_name):
+            if ('attn_qk' in layer_name) or ('attn_pv' in layer_name):
                 layer_cycle  = npu._layer_cycle_total[layer_name]
                 layer_energy = npu._layer_energy_compute[layer_name] + \
                     npu._layer_energy_sram_rd[layer_name] + \

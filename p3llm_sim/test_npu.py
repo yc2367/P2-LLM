@@ -6,8 +6,8 @@ from utils import MODEL_NAME_LIST
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
     parser.add_argument("--num_npu_core", type=int, default=4, help="Number of NPU cores")
-    parser.add_argument("--batch_size", type=int, default=8, help="Input batch size")
-    parser.add_argument("--cxt_len", type=int, default=4096, help="Input context length")
+    parser.add_argument("--batch_size", type=int, default=1, help="Input batch size")
+    parser.add_argument("--cxt_len", type=int, default=16384, help="Input context length")
     parser.add_argument(
         "--is_prefill", action="store_true", 
         help="If enabled, then simulate the prefill stage, otherwise the generation stage."

@@ -108,6 +108,7 @@ class PIM(PCU_Array):
         pe_dp_size       = self.pe_dp_size
         pe_num_total     = self.pe_num_total
         pcu_reuse_factor = self.pcu_reuse_factor
+        pe_per_channel   = self.pe_per_channel
 
         num_word_per_page = page_size / self.w_prec
         dp_size_per_page = num_word_per_page / self.pe_per_pcu  # dot-product size in one page
@@ -124,9 +125,19 @@ class PIM(PCU_Array):
         tile_cout  = math.ceil(cout / pe_num_total)
         tile_batch = math.ceil(batch_size / pcu_reuse_factor)
 
-        num_page_activate = cin / dp_size_per_page
-        overhead_per_page_activate = self.tRCD + self.tRP + (dp_size_per_page * self.a_prec / (self.dram.rw_bw / self.num_channel) * pcu_reuse_factor)
-        cycle_cin = (tile_cin * self.tCCD_L) + (overhead_per_page_activate * num_page_activate)
+        ###########  Overhead of row activation-precharge before PIM and output register readout after PIM  ###########
+        if (pcu_reuse_factor > 1) and (batch_size > 1):
+            # Throughput-enhanced PCU
+            num_output_per_pe = 2
+        else:
+            num_output_per_pe = 1
+        num_page_activate             = cin / dp_size_per_page
+        overhead_input_write_per_page = dp_size_per_page * self.a_prec / (self.dram.rw_bw / self.num_channel) * num_output_per_pe
+        overhead_per_page_activate    = max(self.tRCD + self.tRP, overhead_input_write_per_page)
+        overhead_cin                  = overhead_per_page_activate * num_page_activate
+        overhead_output_readout       = num_output_per_pe * 32 * pe_per_channel / (self.dram.rw_bw / self.num_channel)
+        ##############################################################################################################
+        cycle_cin = (tile_cin * self.tCCD_L) + overhead_cin + overhead_output_readout
         cycle_total = cycle_cin * tile_cout * tile_batch
 
         return cycle_total
@@ -180,32 +191,22 @@ class PIM(PCU_Array):
         # print(f'tile_batch: {tile_batch}')
         # print(f'tile_attn_group: {tile_attn_group}')
         # print()
-        num_page_activate = cin / dp_size_per_page
-        overhead_per_page_activate = self.tRCD + self.tRP + (dp_size_per_page * self.a_prec / (self.dram.rw_bw / self.num_channel) * pcu_reuse_factor)
-        cycle_cin = (tile_cin * self.tCCD_L) + (overhead_per_page_activate * num_page_activate)
+        ###########  Overhead of row activation-precharge before PIM and output register readout after PIM  ###########
+        if (pcu_reuse_factor > 1) and (attn_group_size > 1):
+            # Throughput-enhanced PCU
+            num_output_per_pe = 2
+        else:
+            num_output_per_pe = 1
+        num_page_activate             = cin / dp_size_per_page
+        overhead_input_write_per_page = dp_size_per_page * self.a_prec / (self.dram.rw_bw / self.num_channel) * num_output_per_pe
+        overhead_per_page_activate    = max(self.tRCD + self.tRP, overhead_input_write_per_page)
+        overhead_cin                  = overhead_per_page_activate * num_page_activate
+        overhead_output_readout       = num_output_per_pe * 32 * pe_per_channel / (self.dram.rw_bw / self.num_channel)
+        ##############################################################################################################
+        cycle_cin = (tile_cin * self.tCCD_L) + overhead_cin + overhead_output_readout
         cycle_total = cycle_cin * tile_cout * tile_batch * tile_attn_group
 
         return cycle_total
-    
-    def _calc_tile_fc(self, w_dim, o_dim):
-        pe_dp_size = self.pe_dp_size
-        pe_num_total = self.pe_num_total
-        pcu_reuse_factor = self.pcu_reuse_factor
-
-        # output channel, input channel
-        _, cout, cin = w_dim
-        # num token, output channel
-        _, batch_size, _ = o_dim
-
-        # tile_cin:    number of tiles along input channel
-        # tile_cout:   number of tiles along output channel
-        # tile_batch:  number of tiles along batch size
-        tile_cin   = math.ceil(cin / pe_dp_size)
-        tile_cout  = math.ceil(cout / pe_num_total)
-        tile_batch = math.ceil(batch_size / pcu_reuse_factor)
-        tile_total = tile_cin * tile_cout * tile_batch
-
-        return tile_total
     
     def calc_compute_energy(self):
         self._layer_energy_compute = {}
@@ -217,11 +218,13 @@ class PIM(PCU_Array):
         
         for layer_name in self.layer_name_list:
             layer_energy = self._layer_cycle_compute[layer_name] * compute_energy_per_cycle
-            if self.pcu_reuse_factor > 1:
+            if (self.pcu_reuse_factor > 1) and (self.batch_size > 1):
                 layer_energy = layer_energy * 1.3
+            elif (self.pcu_reuse_factor > 1) and (self.batch_size == 1):
+                layer_energy = layer_energy * 1.0
             else:
                 layer_energy = layer_energy * 0.9
-
+            
             self._layer_energy_compute[layer_name] = layer_energy
             total_energy += layer_energy
         

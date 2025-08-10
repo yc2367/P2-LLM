@@ -6,8 +6,8 @@ from utils import MODEL_NAME_LIST
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
     parser.add_argument("--num_npu_core", type=int, default=4, help="Number of NPU cores")
-    parser.add_argument("--batch_size", type=int, default=1, help="Input batch size")
-    parser.add_argument("--cxt_len", type=int, default=16384, help="Input context length")
+    parser.add_argument("--batch_size", type=int, default=4, help="Input batch size")
+    parser.add_argument("--cxt_len", type=int, default=8192, help="Input context length")
 
     args = parser.parse_args()
     num_npu_core  = args.num_npu_core
@@ -26,10 +26,10 @@ if __name__ == "__main__":
     pcu_per_channel   = 8
     pe_per_pcu        = 16
     pe_dp_size        = 4
-    pcu_reuse_factor  = 2
+    pcu_reuse_factor  = 1
 
     #################### Simulate Perforamnce and Energy ####################
-    total_energy_list  = [[0, 0] for _ in MODEL_NAME_LIST]
+    total_energy_list = [[0, 0] for _ in MODEL_NAME_LIST]
     total_latency_list = [0 for _ in MODEL_NAME_LIST]
 
     for idx, model_name in enumerate(MODEL_NAME_LIST):
